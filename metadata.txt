@@ -6,14 +6,14 @@
 name=Lane 批量刷值工具
 qgisMinimumVersion=3.0
 description=限速刷值 / ROAD_TYPE=2 / 转向个数刷值 / 一键重构
-version=1.0.3.6
-author=xiaocici
+version=1.0.3.8
+author=石天赐
 email=2774480158@qq.com
 
 about=读取 LANE、LANE_NODE、INTERSECTION 刷 SPEEDLIMIT 与 VIRTUAL；一键重构复制三份数据并执行步骤6~9后回写 RBDY 字段。
 
-tracker=https://example.com/bugtracker
-repository=https://example.com/repo
+tracker=https://github.com/XiaoCiCi-1326/qgis-lanebatchupdate/issues
+repository=https://github.com/XiaoCiCi-1326/qgis-lanebatchupdate
 # End of mandatory metadata
 
 # Recommended items:
@@ -25,7 +25,7 @@ hasProcessingProvider=no
 # Tags are comma separated with spaces allowed
 tags=vector, lane, attribute
 
-homepage=https://example.com/home
+homepage=https://github.com/XiaoCiCi-1326/qgis-lanebatchupdate
 category=Vector
 icon=icon.png
 # experimental flag

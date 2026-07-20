@@ -5,11 +5,11 @@ from datetime import datetime
 import os
 import traceback
 
-from qgis.PyQt.QtCore import Qt
-from qgis.PyQt.QtGui import QIcon
+from qgis.PyQt.QtCore import Qt, QUrl
+from qgis.PyQt.QtGui import QDesktopServices, QIcon
 from qgis.PyQt.QtWidgets import QAction, QFileDialog, QMessageBox, QProgressDialog
 
-from .reconstruct_config import load_algorithm_ids
+from .reconstruct_config import DIR_ORIGINAL, load_algorithm_ids
 from .reconstruct_feedback import ReconstructFeedback
 from .reconstruct_workflow import ReconstructWorkflow
 
@@ -19,6 +19,7 @@ class ReconstructController:
 
     MODE_PREP = "reconstruct_prep"
     MODE_FULL = "reconstruct_full"
+    MODE_OPEN_ORIG = "reconstruct_open_orig"
 
     def __init__(self, iface, plugin_dir, log_fn):
         self.iface = iface
@@ -29,13 +30,17 @@ class ReconstructController:
 
     def initGui(self, actions_master):
         buttons = (
-            (self.MODE_PREP, "准备三份数据", "icon_reconstruct_prep.png"),
-            (self.MODE_FULL, "一键重构(全程)", "icon_reconstruct_full.png"),
+            (self.MODE_PREP, "准备三份数据", "icon_reconstruct_prep.png", "run"),
+            (self.MODE_FULL, "一键重构(全程)", "icon_reconstruct_full.png", "run"),
+            (self.MODE_OPEN_ORIG, "打开原始文件", "icon_reconstruct_open.png", "open"),
         )
-        for mode, label, icon_name in buttons:
+        for mode, label, icon_name, action_type in buttons:
             icon_path = os.path.join(self.plugin_dir, icon_name)
             action = QAction(QIcon(icon_path), label, self.iface.mainWindow())
-            action.triggered.connect(lambda checked=False, m=mode: self.run(m))
+            if action_type == "open":
+                action.triggered.connect(self.open_original_folder)
+            else:
+                action.triggered.connect(lambda checked=False, m=mode: self.run(m))
             self.iface.addVectorToolBarIcon(action)
             self.iface.addPluginToVectorMenu("车道处理工具", action)
             self.actions.append(action)
@@ -102,6 +107,22 @@ class ReconstructController:
             QMessageBox.No,
         )
         return reply == QMessageBox.Yes
+
+    def open_original_folder(self):
+        """在资源管理器中打开插件目录下的「原始文件」文件夹。"""
+        folder = os.path.join(self.plugin_dir, DIR_ORIGINAL)
+        if not os.path.isdir(folder):
+            QMessageBox.warning(
+                None,
+                "打开原始文件",
+                f"「原始文件」目录尚不存在：\n{folder}\n\n请先执行「准备三份数据」或「一键重构」。",
+            )
+            return
+        ok = QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
+        if ok:
+            self.log(f"已打开文件夹: {folder}", show_bar=False)
+        else:
+            QMessageBox.warning(None, "打开原始文件", f"无法打开文件夹:\n{folder}")
 
     def run(self, mode):
         self.log_lines = []
