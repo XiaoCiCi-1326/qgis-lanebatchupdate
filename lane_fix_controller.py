@@ -139,11 +139,18 @@ class LaneFixController:
             stats = engine.apply_all(actions)
             lane_layer.triggerRepaint()
 
+            # Excel 指令处理完后、步骤 8/9 前，全量扫描补空 RBDY
+            progress.setLabelText("全量扫描 LANE 补空 RBDY…")
+            self._log("===== 全量扫描补空 RBDY =====")
+            scan_result = engine.scan_and_fill_all_empty_rbdy()
+            lane_layer.triggerRepaint()
+
             progress.setLabelText("边线修复完成，正在执行步骤 8、9…")
             saved = workflow.run_steps_8_9_and_save(feedback, algorithm_ids)
 
             log_path = self._save_log()
             log_hint = log_path or os.path.join(self.plugin_dir, "log")
+            total_rbdy = sum(scan_result.values())
             QMessageBox.information(
                 None,
                 "修复完毕",
@@ -153,6 +160,8 @@ class LaneFixController:
                 f"更新要素 {stats['features_updated']} 条\n"
                 f"未找到车道 {stats['not_found']} 条\n"
                 f"跳过 {stats['skipped']} 条\n"
+                f"全量补空RBDY {total_rbdy} 条 "
+                f"(left={scan_result['left']} right={scan_result['right']} fallback={scan_result['fallback']})\n"
                 f"步骤 8、9 后保存图层 {saved} 个\n\n"
                 f"若仍有错误，请再导出表格后重跑一遍。\n"
                 f"日志: {log_hint}",

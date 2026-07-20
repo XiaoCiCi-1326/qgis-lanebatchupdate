@@ -266,6 +266,109 @@ class LaneFixEngine:
             return 0
         return updated
 
+    def scan_and_fill_all_empty_rbdy(self) -> Dict[str, int]:
+        """
+        全量扫描所有 lane，对 RBDY_L/R 为空的字段按三级策略补全。
+        策略（与 _fill_empty_rbdy_from_lrvs 一致）：
+          RBDY_L → 1) LEFT_RVS 对向 BDY_LEFT  2) RIGHT_RVS 对向 BDY_RIGHT  3) 本车道 BDY_LEFT
+          RBDY_R → 1) RIGHT_RVS 对向 BDY_RIGHT  2) LEFT_RVS 对向 BDY_LEFT  3) 本车道 BDY_RIGHT
+        返回填充统计（按 left/right/fallback 分开计数）。
+        """
+        rbdy_l_field = self._resolve_actual_field("RBDY_L")
+        rbdy_r_field = self._resolve_actual_field("RBDY_R")
+        if not (rbdy_l_field and rbdy_r_field):
+            return {"left": 0, "right": 0, "fallback": 0}
+
+        result = {"left": 0, "right": 0, "fallback": 0}
+        was_editing = self.lane_layer.isEditable()
+        if not was_editing and not self.lane_layer.startEditing():
+            return result
+
+        try:
+            for feat in self.lane_layer.getFeatures():
+                # RBDY_L
+                if self.is_empty(feat[rbdy_l_field]):
+                    filled, method = self._try_fill_rbdy(feat, "RBDY_L")
+                    if filled:
+                        self.lane_layer.updateFeature(feat)
+                        result[method] += 1
+                        self.log(
+                            f"全量补RBDY laneid={self.norm_id(feat['ID'])} "
+                            f"RBDY_L={feat[rbdy_l_field]} ({method})",
+                            show_bar=False,
+                        )
+                # RBDY_R
+                if self.is_empty(feat[rbdy_r_field]):
+                    filled, method = self._try_fill_rbdy(feat, "RBDY_R")
+                    if filled:
+                        self.lane_layer.updateFeature(feat)
+                        result[method] += 1
+                        self.log(
+                            f"全量补RBDY laneid={self.norm_id(feat['ID'])} "
+                            f"RBDY_R={feat[rbdy_r_field]} ({method})",
+                            show_bar=False,
+                        )
+
+            if not was_editing and not self.lane_layer.commitChanges():
+                self.lane_layer.rollBack()
+                return {"left": 0, "right": 0, "fallback": 0}
+        except Exception:
+            if not was_editing:
+                self.lane_layer.rollBack()
+            return result
+
+        total = sum(result.values())
+        self.log(
+            f"[全量补RBDY] 完成: 共填充 {total} 条 "
+            f"(left={result['left']} right={result['right']} fallback={result['fallback']})",
+            show_bar=False,
+        )
+        return result
+
+    def _try_fill_rbdy(self, feat, logical_rbdy: str):
+        """
+        对单个 feature 尝试填充指定 RBDY 字段。
+        返回 (filled: bool, method: str)  filled=True 时 feat 已被修改。
+        """
+        rev_fields = (
+            [("LEFT_RVS", "BDY_LEFT"), ("RIGHT_RVS", "BDY_RIGHT")]
+            if logical_rbdy == "RBDY_L"
+            else [("RIGHT_RVS", "BDY_RIGHT"), ("LEFT_RVS", "BDY_LEFT")]
+        )
+        own_bdy_f = self._resolve_actual_field(
+            "BDY_LEFT" if logical_rbdy == "RBDY_L" else "BDY_RIGHT"
+        )
+        rbdy_f = self._resolve_actual_field(logical_rbdy)
+
+        # 策略 1/2：从对向车道推断
+        for rev_name, bdy_name in rev_fields:
+            rev_f = self._resolve_actual_field(rev_name)
+            bdy_f = self._resolve_actual_field(bdy_name)
+            if not (rev_f and bdy_f):
+                continue
+            rev_ids = self.split_ids(feat[rev_f])
+            if not rev_ids:
+                continue
+            rev_fid = self.lane_by_id.get(rev_ids[0])
+            if rev_fid is None:
+                continue
+            rev_feat = self.lane_layer.getFeature(rev_fid)
+            bdy_val = rev_feat[bdy_f]
+            if self.is_empty(bdy_val):
+                continue
+            feat[rbdy_f] = bdy_val
+            method = "left" if rev_name == "LEFT_RVS" else "right"
+            return True, method
+
+        # 策略 3/6：本车道 BDY 兜底
+        if own_bdy_f:
+            bdy_val = feat[own_bdy_f]
+            if not self.is_empty(bdy_val):
+                feat[rbdy_f] = bdy_val
+                return True, "fallback"
+
+        return False, ""
+
     def apply_actions(self, actions: List[LaneFixAction]) -> Dict[str, int]:
         """执行改错，返回统计。"""
         stats = {
@@ -280,7 +383,8 @@ class LaneFixEngine:
         if missing:
             raise RuntimeError(f"LANE 缺少字段: {', '.join(missing)}")
 
-        if not self.lane_layer.startEditing():
+        was_editing = self.lane_layer.isEditable()
+        if not was_editing and not self.lane_layer.startEditing():
             raise RuntimeError("LANE 图层无法进入编辑模式")
 
         touched = set()
@@ -409,12 +513,14 @@ class LaneFixEngine:
                             show_bar=False,
                         )
 
-            if not self.lane_layer.commitChanges():
-                errors = "; ".join(self.lane_layer.commitErrors())
-                self.lane_layer.rollBack()
-                raise RuntimeError(f"LANE 保存失败: {errors}")
+            if not was_editing:
+                if not self.lane_layer.commitChanges():
+                    errors = "; ".join(self.lane_layer.commitErrors())
+                    self.lane_layer.rollBack()
+                    raise RuntimeError(f"LANE 保存失败: {errors}")
         except Exception:
-            self.lane_layer.rollBack()
+            if not was_editing:
+                self.lane_layer.rollBack()
             raise
 
         stats["features_updated"] = len(touched)

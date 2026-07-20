@@ -1,5 +1,10 @@
 # 更新日志
 
+## v1.0.4.8
+- Excel边线改错：修复 RBDY 填充时 startEditing 重复调用失败（已在编辑模式则不再调用）
+- Excel边线改错：自动检测图层是否已进入编辑模式，避免 commit 时报错
+- Excel边线改错：改错完成后自动全量扫描 LANE，对所有 RBDY_L/R 为空的 lane 按三级策略补全（LEFT_RVS 对向 → RIGHT_RVS 对向 → 本车道 BDY 兜底），再执行步骤 8/9 并保存
+
 ## v1.0.4.7
 - 增强 RBDY 补全逻辑（3 级兜底）：对向 LEFT_RVS → 对向 RIGHT_RVS → 本车道 BDY 直接填
 - 步骤 8、9 已自动执行（无需手动）
