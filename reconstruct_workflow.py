@@ -433,6 +433,19 @@ class ReconstructWorkflow:
         self.iface.mapCanvas().refresh()
         return saved
 
+    def run_steps_8_9_and_save(self, feedback, algorithm_ids):
+        """在当前工程全部图层上执行步骤 8、9 并保存（不重新加载目录）。"""
+        self.log("===== 收尾：执行步骤 8、9 并保存 =====")
+        processor = ReconstructProcessing(self.iface, algorithm_ids, self.log)
+        processor.run_steps_8_to_9(feedback)
+        count = self.save_all_vector_layers()
+        self.log(
+            f"步骤 8、9 完成，已保存 {count} 个图层，"
+            f"工程内保留 {len(QgsProject.instance().mapLayers())} 个图层",
+            show_bar=False,
+        )
+        return count
+
     def run_final_original_steps(self, feedback, algorithm_ids):
         """收尾：加载「原始文件」全部 shp，执行步骤 8、9，保存并保留图层。"""
         original_dir = os.path.join(self.plugin_dir, DIR_ORIGINAL)

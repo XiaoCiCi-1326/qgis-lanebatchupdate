@@ -5,12 +5,12 @@
 [general]
 name=Lane 批量刷值工具
 qgisMinimumVersion=3.0
-description=限速刷值 / ROAD_TYPE=2 / 转向个数刷值 / 一键重构
-version=1.0.3.9
+description=限速刷值 / ROAD_TYPE=2 / 转向个数刷值 / 一键重构 / Excel边线改错
+version=1.0.4.1
 author=石天赐
 email=2774480158@qq.com
 
-about=读取 LANE、LANE_NODE、INTERSECTION 刷 SPEEDLIMIT 与 VIRTUAL；一键重构复制三份数据并执行步骤6~9后回写 RBDY 字段。项目主页与源码见下方链接。
+about=读取 LANE、LANE_NODE、INTERSECTION 刷 SPEEDLIMIT 与 VIRTUAL；一键重构复制三份数据并执行步骤6~9后回写 RBDY 字段；Excel边线改错可读取 3.16 质检导出表格自动修复 LANE 边线关联。项目主页与源码见下方链接。
 
 homepage=https://github.com/XiaoCiCi-1326/qgis-lanebatchupdate
 tracker=https://github.com/XiaoCiCi-1326/qgis-lanebatchupdate/issues
