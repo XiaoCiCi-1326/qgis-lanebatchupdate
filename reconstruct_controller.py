@@ -18,8 +18,6 @@ class ReconstructController:
     """独立于限速/转向/ROAD_TYPE 三个按钮的重构功能入口。"""
 
     MODE_PREP = "reconstruct_prep"
-    MODE_PASS1 = "reconstruct_pass1"
-    MODE_PASS2 = "reconstruct_pass2"
     MODE_FULL = "reconstruct_full"
 
     def __init__(self, iface, plugin_dir, log_fn):
@@ -32,8 +30,6 @@ class ReconstructController:
     def initGui(self, actions_master):
         buttons = (
             (self.MODE_PREP, "准备三份数据", "icon_reconstruct_prep.png"),
-            (self.MODE_PASS1, "第一次重构", "icon_reconstruct_pass1.png"),
-            (self.MODE_PASS2, "第二次重构", "icon_reconstruct_pass2.png"),
             (self.MODE_FULL, "一键重构(全程)", "icon_reconstruct_full.png"),
         )
         for mode, label, icon_name in buttons:
@@ -111,8 +107,6 @@ class ReconstructController:
         self.log_lines = []
         titles = {
             self.MODE_PREP: "准备三份数据",
-            self.MODE_PASS1: "第一次重构",
-            self.MODE_PASS2: "第二次重构",
             self.MODE_FULL: "一键重构(全程)",
         }
         title = titles.get(mode, "一键重构")
@@ -145,16 +139,6 @@ class ReconstructController:
                 workflow.data_dir = source
                 workflow.copy_three_workdirs(source)
                 done = f"三份数据已复制到插件目录\n源: {source}"
-            elif mode == self.MODE_PASS1:
-                workflow.ensure_workdirs()
-                workflow.run_pass(1, feedback, algorithm_ids)
-                workflow.remove_all_layers()
-                done = "第一次重构完成，LANE 已写回「原始文件」"
-            elif mode == self.MODE_PASS2:
-                workflow.ensure_workdirs()
-                workflow.run_pass(2, feedback, algorithm_ids)
-                workflow.remove_all_layers()
-                done = "第二次重构完成，LANE 已写回「原始文件」"
             elif mode == self.MODE_FULL:
                 source, _ = self._resolve_source_with_dialog(workflow, require_source=False)
                 workflow.run_full(

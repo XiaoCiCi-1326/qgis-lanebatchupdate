@@ -196,16 +196,16 @@ class ReconstructProcessing:
         hint = info.get("hint") or info.get("label") or step_key
         return False, f"未找到工具栏按钮: {hint}"
 
-    def run_steps_6_to_9(self, feedback):
-        """依次执行工具栏步骤 6~9。"""
-        for step_key in ("step6", "step7", "step8", "step9"):
+    def run_steps_8_to_9(self, feedback):
+        """收尾：仅执行工具栏步骤 8、9。"""
+        for step_key in ("step8", "step9"):
             info = STEP_TOOLBAR[step_key]
             feedback.setProgressText(f"步骤 {step_key[-1]}: {info['label']} …")
             ok, name = self.run_step(step_key, feedback)
             if not ok:
                 raise RuntimeError(
                     f"步骤 {step_key} 执行失败: {name}\n"
-                    f"请确认已安装 Z Attribute / Z Tools 插件，且工具栏四个按钮可见。"
+                    f"请确认 Z Tools 工具栏按钮可见。"
                 )
             self.log(f"{step_key} 完成: {name}", show_bar=False)
         return True
