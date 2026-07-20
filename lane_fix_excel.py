@@ -16,12 +16,13 @@ from typing import Iterable, List, Optional
 class LaneFixAction:
     """单条改错指令。"""
 
-    action: str  # add / remove / skip
+    action: str  # add / remove / skip / move
     target_field: str  # BDY_LEFT / BDY_RIGHT / RBDY_L / RBDY_R
     match_field: str  # ID / ROAD_ID
     match_value: str
     mark_ids: List[str]
     source_text: str
+    target_field_to: str = ""  # move：目标字段
     note: str = ""
 
 
@@ -36,6 +37,7 @@ _ERROR_PATTERNS = (
         "add",
         "BDY_LEFT",
         "ID",
+        "",
     ),
     (
         re.compile(
@@ -45,6 +47,7 @@ _ERROR_PATTERNS = (
         "add",
         "BDY_RIGHT",
         "ID",
+        "",
     ),
     (
         re.compile(
@@ -54,6 +57,7 @@ _ERROR_PATTERNS = (
         "skip",
         "BDY_LEFT",
         "ID",
+        "",
     ),
     (
         re.compile(
@@ -63,6 +67,7 @@ _ERROR_PATTERNS = (
         "skip",
         "BDY_RIGHT",
         "ID",
+        "",
     ),
     (
         re.compile(
@@ -72,6 +77,7 @@ _ERROR_PATTERNS = (
         "remove",
         "BDY_LEFT",
         "ID",
+        "",
     ),
     (
         re.compile(
@@ -81,6 +87,7 @@ _ERROR_PATTERNS = (
         "remove",
         "BDY_RIGHT",
         "ID",
+        "",
     ),
     (
         re.compile(
@@ -90,6 +97,7 @@ _ERROR_PATTERNS = (
         "remove",
         "BDY_LEFT",
         "ID",
+        "",
     ),
     (
         re.compile(
@@ -99,6 +107,7 @@ _ERROR_PATTERNS = (
         "remove",
         "BDY_RIGHT",
         "ID",
+        "",
     ),
     # link/road 级：RBDY 缺失/不应记录
     (
@@ -109,6 +118,7 @@ _ERROR_PATTERNS = (
         "remove",
         "RBDY_L",
         "ROAD_ID",
+        "",
     ),
     (
         re.compile(
@@ -118,6 +128,7 @@ _ERROR_PATTERNS = (
         "remove",
         "RBDY_R",
         "ROAD_ID",
+        "",
     ),
     (
         re.compile(
@@ -127,6 +138,7 @@ _ERROR_PATTERNS = (
         "add",
         "RBDY_L",
         "ROAD_ID",
+        "",
     ),
     (
         re.compile(
@@ -136,6 +148,7 @@ _ERROR_PATTERNS = (
         "add",
         "RBDY_R",
         "ROAD_ID",
+        "",
     ),
     (
         re.compile(
@@ -145,6 +158,7 @@ _ERROR_PATTERNS = (
         "add",
         "RBDY_L",
         "ROAD_ID",
+        "",
     ),
     (
         re.compile(
@@ -154,6 +168,7 @@ _ERROR_PATTERNS = (
         "add",
         "RBDY_R",
         "ROAD_ID",
+        "",
     ),
     (
         re.compile(
@@ -163,6 +178,48 @@ _ERROR_PATTERNS = (
         "add",
         "RBDY_L",
         "ROAD_ID",
+        "",
+    ),
+    # link 级：左右侧位错误（边线 ID 挂反了左右侧）→ 从 RBDY_L 移到 RBDY_R 等
+    (
+        re.compile(
+            r"link\s*id\s*[：:\s]*(\d+)[，,]?.*?左侧\s*bdyid_l[，,]?.*?关联的边线\s*id?\s*(\d+).*?左右侧位错误",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        "move",
+        "RBDY_L",
+        "ROAD_ID",
+        "RBDY_R",
+    ),
+    (
+        re.compile(
+            r"link\s*id\s*[：:\s]*(\d+)[，,]?.*?右侧\s*bdyid_r[，,]?.*?关联的边线\s*id?\s*(\d+).*?左右侧位错误",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        "move",
+        "RBDY_R",
+        "ROAD_ID",
+        "RBDY_L",
+    ),
+    (
+        re.compile(
+            r"lane\s*id\s*[：:\s]*(\d+)[，,]?.*?左侧\s*lmark_l[，,]?.*?关联的边线\s*id?\s*(\d+).*?左右侧位错误",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        "move",
+        "BDY_LEFT",
+        "ID",
+        "BDY_RIGHT",
+    ),
+    (
+        re.compile(
+            r"lane\s*id\s*[：:\s]*(\d+)[，,]?.*?右侧\s*lmark_r[，,]?.*?关联的边线\s*id?\s*(\d+).*?左右侧位错误",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        "move",
+        "BDY_RIGHT",
+        "ID",
+        "BDY_LEFT",
     ),
 )
 
@@ -209,7 +266,33 @@ def _parse_structured_row(cells: List[str]) -> Optional[LaneFixAction]:
     else:
         mark_ids = [mark_m.group(1)]
 
-    if "删除" in joined or "不应记录" in joined or "错误" in joined:
+    if "左右侧位错误" in joined:
+        mark_m = re.search(r"关联的边线\s*id?\s*(\d+)", joined, re.I)
+        mark_ids = [mark_m.group(1)] if mark_m else []
+        if lane_m:
+            if "lmark_l" in text_blob or "左侧" in joined:
+                return LaneFixAction(
+                    "move", "BDY_LEFT", "ID", lane_m.group(1), mark_ids, joined,
+                    target_field_to="BDY_RIGHT",
+                )
+            if "lmark_r" in text_blob or "右侧" in joined:
+                return LaneFixAction(
+                    "move", "BDY_RIGHT", "ID", lane_m.group(1), mark_ids, joined,
+                    target_field_to="BDY_LEFT",
+                )
+        if link_m:
+            if "bdyid_l" in text_blob or "左侧" in joined:
+                return LaneFixAction(
+                    "move", "RBDY_L", "ROAD_ID", link_m.group(1), mark_ids, joined,
+                    target_field_to="RBDY_R",
+                )
+            if "bdyid_r" in text_blob or "右侧" in joined:
+                return LaneFixAction(
+                    "move", "RBDY_R", "ROAD_ID", link_m.group(1), mark_ids, joined,
+                    target_field_to="RBDY_L",
+                )
+
+    if "删除" in joined or "不应记录" in joined or ("错误" in joined and "左右侧位" not in joined):
         op = "remove"
     elif "补充" in joined or "缺失" in joined or "添加" in joined:
         op = "add"
@@ -243,7 +326,7 @@ def parse_error_text(text: str) -> Optional[LaneFixAction]:
         return None
     compact = re.sub(r"\s+", " ", raw)
 
-    for pattern, action, field, match_field in _ERROR_PATTERNS:
+    for pattern, action, field, match_field, field_to in _ERROR_PATTERNS:
         match = pattern.search(compact)
         if not match:
             continue
@@ -253,6 +336,8 @@ def parse_error_text(text: str) -> Optional[LaneFixAction]:
         note = ""
         if action == "skip":
             note = "表格未给出应补充的边线 ID，需手动处理"
+        elif action == "move":
+            note = f"从 {field} 移到 {field_to}"
         return LaneFixAction(
             action=action,
             target_field=field,
@@ -260,6 +345,7 @@ def parse_error_text(text: str) -> Optional[LaneFixAction]:
             match_value=match_value,
             mark_ids=mark_ids,
             source_text=raw,
+            target_field_to=field_to or "",
             note=note,
         )
     return None
@@ -365,7 +451,7 @@ def parse_fix_actions(path: str) -> List[LaneFixAction]:
     for cells in rows:
         # 跳过表头行
         header_hint = "".join(cells)
-        if "错误描述" in header_hint and "改错" in header_hint:
+        if "检查分组" in header_hint or ("问题描述" in header_hint and "检查项" in header_hint):
             continue
 
         candidates = []
@@ -387,6 +473,7 @@ def parse_fix_actions(path: str) -> List[LaneFixAction]:
             key = (
                 action.action,
                 action.target_field,
+                action.target_field_to,
                 action.match_field,
                 action.match_value,
                 tuple(action.mark_ids),

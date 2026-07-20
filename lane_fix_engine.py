@@ -118,6 +118,53 @@ class LaneFixEngine:
         changed = len(new_ids) != len(existing)
         return self._join_ids(new_ids), changed
 
+    def _move_ids(self, from_val, to_val, move_list: List[str]):
+        from_ids = self.split_ids(from_val)
+        to_ids = self.split_ids(to_val)
+        changed = False
+        remove_set = set(move_list)
+        new_from = [item for item in from_ids if item not in remove_set]
+        if len(new_from) != len(from_ids):
+            changed = True
+        for mark_id in move_list:
+            if mark_id and mark_id not in to_ids:
+                to_ids.append(mark_id)
+                changed = True
+        return self._join_ids(new_from), self._join_ids(to_ids), changed
+
+    # move RBDY 时同步 lmark（BDY_LEFT/BDY_RIGHT）
+    _LMARK_SYNC = {
+        "RBDY_L": ("BDY_LEFT", "BDY_RIGHT"),
+        "RBDY_R": ("BDY_RIGHT", "BDY_LEFT"),
+        "BDY_LEFT": ("RBDY_L", "RBDY_R"),
+        "BDY_RIGHT": ("RBDY_R", "RBDY_L"),
+    }
+
+    def _apply_field_move(self, feat, field_from, field_to, mark_ids):
+        """单字段或成对字段移动边线 ID。"""
+        changed_any = False
+        pairs = [(field_from, field_to)]
+        sync = self._LMARK_SYNC.get(field_from)
+        if sync:
+            src_lmark, dst_lmark = sync
+            if self._resolve_actual_field(src_lmark) and self._resolve_actual_field(dst_lmark):
+                pairs.append((src_lmark, dst_lmark))
+
+        for logical_from, logical_to in pairs:
+            actual_from = self._resolve_actual_field(logical_from)
+            actual_to = self._resolve_actual_field(logical_to)
+            if not actual_from or not actual_to:
+                continue
+            new_from, new_to, changed = self._move_ids(
+                feat[actual_from], feat[actual_to], mark_ids
+            )
+            if not changed:
+                continue
+            feat[actual_from] = new_from if new_from else None
+            feat[actual_to] = new_to if new_to else None
+            changed_any = True
+        return changed_any
+
     def apply_actions(self, actions: List[LaneFixAction]) -> Dict[str, int]:
         """执行改错，返回统计。"""
         stats = {
@@ -147,7 +194,16 @@ class LaneFixEngine:
                     continue
 
                 target_field = self._resolve_actual_field(action.target_field)
-                if not target_field:
+                target_field_to = self._resolve_actual_field(action.target_field_to)
+                if action.action == "move":
+                    if not target_field or not target_field_to:
+                        stats["skipped"] += 1
+                        self.log(
+                            f"跳过(move 缺字段): {action.target_field}->{action.target_field_to}",
+                            show_bar=False,
+                        )
+                        continue
+                elif not target_field:
                     stats["skipped"] += 1
                     self.log(f"跳过(无字段): {action.target_field}", show_bar=False)
                     continue
@@ -171,32 +227,49 @@ class LaneFixEngine:
                     feat = self.lane_layer.getFeature(fid)
                     if not feat.isValid():
                         continue
-                    old_val = feat[target_field]
+                    changed = False
                     if action.action == "add":
-                        new_val, changed = self._add_ids(old_val, action.mark_ids)
+                        new_val, changed = self._add_ids(feat[target_field], action.mark_ids)
+                        if changed:
+                            feat[target_field] = new_val if new_val else None
                     elif action.action == "remove":
-                        new_val, changed = self._remove_ids(old_val, action.mark_ids)
+                        new_val, changed = self._remove_ids(feat[target_field], action.mark_ids)
+                        if changed:
+                            feat[target_field] = new_val if new_val else None
+                    elif action.action == "move":
+                        changed = self._apply_field_move(
+                            feat,
+                            action.target_field,
+                            action.target_field_to,
+                            action.mark_ids,
+                        )
                     else:
                         stats["skipped"] += 1
                         continue
 
                     if not changed:
                         self.log(
-                            f"无变化 lane={action.match_value} {target_field} "
+                            f"无变化 lane={action.match_value} {action.target_field} "
                             f"{action.action} {action.mark_ids}",
                             show_bar=False,
                         )
                         continue
 
-                    feat[target_field] = new_val if new_val else None
                     self.lane_layer.updateFeature(feat)
                     touched.add(fid)
                     stats["applied"] += 1
-                    self.log(
-                        f"laneid={action.match_value} {target_field} "
-                        f"{action.action} {action.mark_ids} OK",
-                        show_bar=False,
-                    )
+                    if action.action == "move":
+                        self.log(
+                            f"laneid={action.match_value} move {action.mark_ids} "
+                            f"{action.target_field}->{action.target_field_to} OK",
+                            show_bar=False,
+                        )
+                    else:
+                        self.log(
+                            f"laneid={action.match_value} {target_field} "
+                            f"{action.action} {action.mark_ids} OK",
+                            show_bar=False,
+                        )
 
             if not self.lane_layer.commitChanges():
                 errors = "; ".join(self.lane_layer.commitErrors())
