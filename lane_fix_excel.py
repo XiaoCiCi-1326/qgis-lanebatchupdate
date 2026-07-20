@@ -120,6 +120,19 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
     link_id = _extract_link_id(compact)
     lane_id = _extract_lane_id(compact)
 
+    # 2.3 bdyid_l/r 为空 → 从同 link 各 lane 的 BDY_LEFT/BDY_RIGHT 并集回填 RBDY
+    if link_id and re.search(r"bdyid_[lr]是空的", compact, re.IGNORECASE):
+        if "bdyid_r" in compact.lower():
+            field = "RBDY_R"
+        else:
+            field = "RBDY_L"
+        return [
+            LaneFixAction(
+                "fill_from_bdy", field, "ROAD_ID", link_id, [], raw,
+                note="RBDY 为空，从 BDY 并集补线段",
+            )
+        ]
+
     # 2.3 / 2.6 缺失边线（支持「缺失边线」「缺失了边线」）
     if link_id and re.search(r"缺失了?边线", compact):
         if "缺失了边线" in compact:
@@ -357,7 +370,14 @@ def load_table_rows(path: str) -> List[List[str]]:
     raise RuntimeError("请选择 .xlsx / .csv 格式的错误表格")
 
 
-_ACTION_ORDER = {"remove": 0, "move": 1, "swap": 2, "add": 3, "skip": 9}
+_ACTION_ORDER = {
+    "remove": 0,
+    "move": 1,
+    "swap": 2,
+    "fill_from_bdy": 3,
+    "add": 4,
+    "skip": 9,
+}
 
 
 def sort_fix_actions(actions: List[LaneFixAction]) -> List[LaneFixAction]:

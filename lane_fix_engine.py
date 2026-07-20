@@ -227,9 +227,25 @@ class LaneFixEngine:
                     self.log(f"跳过(无字段): {action.target_field}", show_bar=False)
                     continue
 
-                if not action.mark_ids and action.action != "skip":
+                if not action.mark_ids and action.action not in ("skip", "fill_from_bdy"):
                     stats["skipped"] += 1
                     self.log(f"跳过(无边线ID): {action.source_text[:80]}", show_bar=False)
+                    continue
+
+                if action.action == "fill_from_bdy":
+                    count = self._fill_empty_rbdy_from_bdy(
+                        action.match_value, action.target_field
+                    )
+                    if count:
+                        stats["applied"] += count
+                        stats["features_updated"] += count
+                    else:
+                        stats["skipped"] += 1
+                        self.log(
+                            f"跳过(无法从BDY补): ROAD_ID={action.match_value} "
+                            f"{action.target_field} {action.source_text[:60]}",
+                            show_bar=False,
+                        )
                     continue
 
                 feat_ids = self._find_feature_ids(action)
@@ -321,6 +337,52 @@ class LaneFixEngine:
 
         stats["features_updated"] = len(touched)
         return stats
+
+    def _fill_empty_rbdy_from_bdy(self, road_id: str, logical_rbdy: str) -> int:
+        """RBDY_L/R 为空时，仅用同 link 上 BDY_LEFT/BDY_RIGHT 并集回填（对齐规则表 2.3）。"""
+        bdy_l = self._resolve_actual_field("BDY_LEFT")
+        bdy_r = self._resolve_actual_field("BDY_RIGHT")
+        rbdy_l = self._resolve_actual_field("RBDY_L")
+        rbdy_r = self._resolve_actual_field("RBDY_R")
+        if not all([bdy_l, bdy_r, rbdy_l, rbdy_r]):
+            return 0
+
+        if logical_rbdy == "RBDY_L":
+            bdy_field, rbdy_field = bdy_l, rbdy_l
+        elif logical_rbdy == "RBDY_R":
+            bdy_field, rbdy_field = bdy_r, rbdy_r
+        else:
+            return 0
+
+        feat_ids = self.lane_by_road.get(road_id, [])
+        if not feat_ids:
+            return 0
+
+        union_ids: List[str] = []
+        for fid in feat_ids:
+            feat = self.lane_layer.getFeature(fid)
+            union_ids.extend(self.split_ids(feat[bdy_field]))
+        union_ids = list(dict.fromkeys(union_ids))
+        if not union_ids:
+            return 0
+
+        fill_val = self._join_ids(union_ids)
+        updated = 0
+        for fid in feat_ids:
+            feat = self.lane_layer.getFeature(fid)
+            if not self.is_empty(feat[rbdy_field]):
+                continue
+            feat[rbdy_field] = fill_val
+            self.lane_layer.updateFeature(feat)
+            updated += 1
+
+        if updated:
+            self.log(
+                f"ROAD_ID={road_id} 空 {logical_rbdy} 已从 BDY 补: {fill_val} "
+                f"({updated} 条 lane)",
+                show_bar=False,
+            )
+        return updated
 
     def infer_rbdy_from_bdy(self, road_ids: List[str]) -> int:
         """同 link 上汇总各 lane 的 BDY_LEFT/BDY_RIGHT，补全 RBDY_L/RBDY_R 并集。"""

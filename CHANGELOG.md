@@ -1,5 +1,9 @@
 # 更新日志
 
+## v1.0.5.0
+- Excel边线改错：支持「bdyid_l/r 是空的」→ 从同 link 的 BDY_LEFT/BDY_RIGHT 并集回填 RBDY（删错边线后补正确线段）
+- 发布版：含 v1.0.4.5 起 Excel 改错增强（48 条 errorlog 一次刷完、回退 infer/ROAD_LINK 全量同步）
+
 ## v1.0.4.5
 - 回退 BDY 全量推断与 ROAD_LINK 汇总同步（避免刷后出现大量新关联错误）
 - 补全 LINKID= 格式 2.2/2.3 解析；LEFT_RVS 互挂前置插入；支持顺序交换
