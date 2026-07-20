@@ -7,8 +7,7 @@ import traceback
 
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QIcon
-from qgis.PyQt.QtWidgets import QAction, QMessageBox, QProgressDialog
-from qgis.core import Qgis
+from qgis.PyQt.QtWidgets import QAction, QFileDialog, QMessageBox, QProgressDialog
 
 from .reconstruct_config import load_algorithm_ids
 from .reconstruct_feedback import ReconstructFeedback
@@ -67,6 +66,37 @@ class ReconstructController:
             handle.write("\n".join(self.log_lines) + "\n")
         return path
 
+    def _pick_source_dir(self, workflow):
+        """未自动识别源目录时，弹出文件夹选择。"""
+        start = workflow.data_dir or workflow.detect_data_dir() or self.plugin_dir
+        folder = QFileDialog.getExistingDirectory(
+            self.iface.mainWindow(),
+            "选择原始数据目录（含 LANE.shp、BOUNDARY.shp 等）",
+            start,
+        )
+        if not folder:
+            return None
+        return folder
+
+    def _resolve_source_with_dialog(self, workflow, require_source=False):
+        """自动识别；失败则询问是否手动选目录。"""
+        try:
+            return workflow.resolve_source_dir(require_source=require_source), False
+        except RuntimeError as exc:
+            reply = QMessageBox.question(
+                None,
+                "未找到原始数据",
+                f"{exc}\n\n是否手动选择原始数据文件夹？",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes,
+            )
+            if reply != QMessageBox.Yes:
+                raise RuntimeError("已取消：未指定原始数据目录")
+            picked = self._pick_source_dir(workflow)
+            if not picked:
+                raise RuntimeError("已取消：未选择数据目录")
+            return workflow.resolve_source_dir(picked, require_source=require_source), True
+
     def _confirm(self, title, message):
         reply = QMessageBox.question(
             None,
@@ -92,6 +122,7 @@ class ReconstructController:
             "将清空当前 QGIS 工程中的图层（不删除磁盘文件）。\n"
             "三份副本写入插件目录：\n"
             "  原始文件 / 删除129 / 删除11以外\n\n"
+            "请勿从上述副本目录加载图层作为源数据。\n"
             "步骤 6~9 依赖您已安装的 QGIS 插件，耗时较长。\n"
             "若自动找不到工具，请配置 reconstruct_algorithms.json\n\n"
             "是否继续？",
@@ -110,10 +141,8 @@ class ReconstructController:
 
         try:
             if mode == self.MODE_PREP:
-                source = workflow.detect_data_dir()
-                if not source:
-                    raise RuntimeError("请先在 QGIS 中加载数据目录下的图层")
-                workflow.remove_all_layers()
+                source, _ = self._resolve_source_with_dialog(workflow, require_source=True)
+                workflow.data_dir = source
                 workflow.copy_three_workdirs(source)
                 done = f"三份数据已复制到插件目录\n源: {source}"
             elif mode == self.MODE_PASS1:
@@ -127,7 +156,13 @@ class ReconstructController:
                 workflow.remove_all_layers()
                 done = "第二次重构完成，LANE 已写回「原始文件」"
             elif mode == self.MODE_FULL:
-                workflow.run_full(feedback, algorithm_ids, copy_only=False)
+                source, _ = self._resolve_source_with_dialog(workflow, require_source=False)
+                workflow.run_full(
+                    feedback,
+                    algorithm_ids,
+                    copy_only=False,
+                    source_dir=source,
+                )
                 done = "一键重构（两次）全部完成"
             else:
                 return
@@ -142,9 +177,10 @@ class ReconstructController:
                 None,
                 "重构失败",
                 f"{exc}\n\n请检查:\n"
-                "1. 是否已安装步骤6~9对应插件\n"
-                "2. reconstruct_algorithms.json 是否配置正确\n"
-                f"3. 日志: {log_path or '无'}",
+                "1. 是否从「原始数据目录」而非插件副本加载/选择数据\n"
+                "2. 是否已安装步骤6~9对应插件\n"
+                "3. reconstruct_algorithms.json 是否配置正确\n"
+                f"4. 日志: {log_path or '无'}",
             )
         finally:
             progress.close()
