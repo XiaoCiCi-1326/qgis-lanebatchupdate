@@ -1,10 +1,8 @@
 # -*- coding: utf-8 -*-
 """一键重构核心流程（第一次 / 第二次）。"""
 
-import gc
 import os
 import shutil
-import time
 
 from qgis.core import (
     QgsFeature,
@@ -28,39 +26,6 @@ class ReconstructWorkflow:
         self.plugin_dir = plugin_dir
         self.log = log_fn
         self.data_dir = ""
-
-    @staticmethod
-    def work_dir_names():
-        return {DIR_ORIGINAL, DIR_DELETE_129, DIR_DELETE_NOT_11}
-
-    def work_dir_paths(self):
-        return (
-            os.path.join(self.plugin_dir, DIR_ORIGINAL),
-            os.path.join(self.plugin_dir, DIR_DELETE_129),
-            os.path.join(self.plugin_dir, DIR_DELETE_NOT_11),
-        )
-
-    def is_plugin_work_dir(self, folder):
-        """是否为插件目录下的三份副本文件夹（不能当作原始数据源）。"""
-        folder = os.path.normcase(os.path.normpath(folder))
-        plugin = os.path.normcase(os.path.normpath(self.plugin_dir))
-        if not folder.startswith(plugin + os.sep) and folder != plugin:
-            return False
-        rel = os.path.relpath(folder, plugin)
-        top = rel.split(os.sep)[0]
-        return top in self.work_dir_names()
-
-    def workdirs_ready(self):
-        """三份副本目录均已存在且含 shp。"""
-        for folder in self.work_dir_paths():
-            if not os.path.isdir(folder):
-                return False
-            has_shp = any(
-                name.lower().endswith(".shp") for name in os.listdir(folder)
-            )
-            if not has_shp:
-                return False
-        return True
 
     @staticmethod
     def is_empty(value):
@@ -98,109 +63,26 @@ class ReconstructWorkflow:
         return None
 
     def detect_data_dir(self):
-        """从当前工程矢量图层推断数据文件夹（跳过插件内三份副本）。"""
+        """从当前工程任矢量图层推断数据文件夹。"""
         for layer in QgsProject.instance().mapLayers().values():
             if isinstance(layer, QgsVectorLayer) and layer.isValid():
                 folder = os.path.dirname(self.layer_path(layer))
-                if not os.path.isdir(folder):
-                    continue
-                if self.is_plugin_work_dir(folder):
-                    continue
-                return folder
+                if os.path.isdir(folder):
+                    return folder
         return None
 
-    def resolve_source_dir(self, picked_dir=None, require_source=False):
-        """
-        确定用于复制的源目录。
-        picked_dir: 用户在对话框中选择的目录（可为 None）。
-        require_source: 为 True 时必须有外部源目录（准备三份数据用）。
-        """
-        if picked_dir:
-            folder = os.path.normpath(picked_dir)
-            if not os.path.isdir(folder):
-                raise RuntimeError(f"目录不存在: {folder}")
-            if self.is_plugin_work_dir(folder):
-                raise RuntimeError(
-                    "不能选择插件内的「原始文件/删除129/删除11以外」作为源。\n"
-                    "请加载或选择您的原始数据文件夹。"
-                )
-            return folder
-
-        detected = self.detect_data_dir()
-        if detected:
-            return detected
-
-        if not require_source and self.workdirs_ready():
-            return None
-
-        raise RuntimeError(
-            "未检测到原始数据目录。\n"
-            "请先在 QGIS 中加载原始数据下的 shp，或点击确定后选择数据文件夹。"
+    def copy_three_workdirs(self, source_dir):
+        """将源目录全部文件复制三份到插件根目录。"""
+        targets = (
+            os.path.join(self.plugin_dir, DIR_ORIGINAL),
+            os.path.join(self.plugin_dir, DIR_DELETE_129),
+            os.path.join(self.plugin_dir, DIR_DELETE_NOT_11),
         )
-
-    def unload_layers_in_dir(self, folder):
-        """卸载工程内指向某目录下文件的图层，避免 Windows 文件锁。"""
-        folder_key = os.path.normcase(os.path.normpath(folder))
-        remove_ids = []
-        for layer in QgsProject.instance().mapLayers().values():
-            if not isinstance(layer, QgsVectorLayer):
-                continue
-            path = os.path.normcase(os.path.normpath(self.layer_path(layer)))
-            if path.startswith(folder_key + os.sep) or path == folder_key:
-                remove_ids.append(layer.id())
-        if remove_ids:
-            QgsProject.instance().removeMapLayers(remove_ids)
-
-    def unload_layers_in_workdirs(self):
-        for folder in self.work_dir_paths():
-            self.unload_layers_in_dir(folder)
-
-    def safe_rmtree(self, path, retries=8):
-        """删除目录，Windows 下 QGIS 释放句柄可能需要短暂重试。"""
-        if not os.path.isdir(path):
-            return
-        last_err = None
-        for attempt in range(retries):
-            try:
-                shutil.rmtree(path)
-                return
-            except PermissionError as exc:
-                last_err = exc
-                gc.collect()
-                time.sleep(0.4 * (attempt + 1))
-        raise PermissionError(
-            f"无法删除目录（文件可能被 QGIS 占用）: {path}\n"
-            f"请关闭对该目录图层的加载后重试。原始错误: {last_err}"
-        )
-
-    def copy_three_workdirs(self, source_dir, keep_project_layers=False):
-        """将源目录全部文件复制三份到插件根目录（直接覆盖已有副本）。"""
-        source_dir = os.path.normpath(source_dir)
-        if not os.path.isdir(source_dir):
-            raise RuntimeError(f"源目录不存在: {source_dir}")
-
-        targets = self.work_dir_paths()
-        staging = os.path.join(self.plugin_dir, "_copy_staging")
-
-        if keep_project_layers:
-            self.unload_layers_in_workdirs()
-        else:
-            self.remove_all_layers()
-        self.iface.mapCanvas().refresh()
-        gc.collect()
-        time.sleep(0.3)
-
-        self.safe_rmtree(staging)
-        shutil.copytree(source_dir, staging)
-        try:
-            for target in targets:
-                self.unload_layers_in_dir(target)
-                self.safe_rmtree(target)
-                shutil.copytree(staging, target)
-                self.log(f"已覆盖复制到: {target}", show_bar=False)
-        finally:
-            if os.path.isdir(staging):
-                shutil.rmtree(staging, ignore_errors=True)
+        for target in targets:
+            if os.path.isdir(target):
+                shutil.rmtree(target)
+            shutil.copytree(source_dir, target)
+            self.log(f"已复制到: {target}", show_bar=False)
         return targets[0], targets[1], targets[2]
 
     def remove_all_layers(self):
@@ -416,48 +298,14 @@ class ReconstructWorkflow:
         del writer
         return out_path
 
-    def save_all_vector_layers(self):
-        """提交并保存工程中全部矢量图层（写入各自 shp 源文件）。"""
-        saved = 0
-        for layer in QgsProject.instance().mapLayers().values():
-            if not isinstance(layer, QgsVectorLayer) or not layer.isValid():
-                continue
-            if layer.isEditable():
-                if not layer.commitChanges():
-                    raise RuntimeError(
-                        f"图层 {layer.name()} 保存失败: "
-                        + "; ".join(layer.commitErrors())
-                    )
-                saved += 1
-                self.log(f"已保存图层: {layer.name()}", show_bar=False)
-        self.iface.mapCanvas().refresh()
-        return saved
-
-    def run_final_original_steps(self, feedback, algorithm_ids):
-        """收尾：加载「原始文件」全部 shp，执行步骤 8、9，保存并保留图层。"""
-        original_dir = os.path.join(self.plugin_dir, DIR_ORIGINAL)
-        if not os.path.isdir(original_dir):
-            raise RuntimeError(f"原始文件目录不存在: {original_dir}")
-
-        self.log(f"===== 收尾：加载原始文件并执行步骤 8、9 =====")
-        self.log(f"目录: {original_dir}", show_bar=False)
-        self.remove_all_layers()
-        self.load_all_shp_in_dir(original_dir)
-
-        processor = ReconstructProcessing(self.iface, algorithm_ids, self.log)
-        processor.run_steps_8_to_9(feedback)
-
-        count = self.save_all_vector_layers()
-        self.log(f"收尾完成，工程内保留 {len(QgsProject.instance().mapLayers())} 个图层", show_bar=False)
-        return count
-
     def ensure_workdirs(self):
         """三份目录不存在时，从当前工程图层源目录复制。"""
-        if self.workdirs_ready():
+        orig = os.path.join(self.plugin_dir, DIR_ORIGINAL)
+        if os.path.isdir(orig):
             return
-        source = self.resolve_source_dir()
+        source = self.detect_data_dir()
         if not source:
-            raise RuntimeError("三份副本不完整，且未检测到原始数据目录")
+            raise RuntimeError("请先加载数据图层，或执行「准备三份数据」")
         self.copy_three_workdirs(source)
 
     def run_pass(self, pass_number, feedback, algorithm_ids):
@@ -497,26 +345,21 @@ class ReconstructWorkflow:
         self.apply_refactor_to_original_lane(original_lane, refactor_table, pass_number)
         self.log(f"第{pass_number}次重构完成，结果已写入: {original_lane}")
 
-    def run_full(self, feedback, algorithm_ids, copy_only=False, source_dir=None):
-        """复制三份 + 第一次 + 第二次重构。source_dir 可为对话框所选路径。"""
-        source = self.resolve_source_dir(source_dir)
-        if source:
-            self.data_dir = source
-            self.log(f"源数据目录: {source}")
-            self.copy_three_workdirs(source)
-        elif self.workdirs_ready():
-            self.log("未加载原始图层，使用已有三份副本继续（跳过复制）")
-            self.remove_all_layers()
-        else:
-            raise RuntimeError(
-                "无法开始：请加载原始数据图层、选择数据目录，或先执行「准备三份数据」"
-            )
+    def run_full(self, feedback, algorithm_ids, copy_only=False):
+        """复制三份 + 第一次 + 第二次重构。"""
+        source = self.detect_data_dir()
+        if not source:
+            raise RuntimeError("请先在 QGIS 中加载数据目录下的图层")
+        self.data_dir = source
+        self.log(f"源数据目录: {source}")
 
+        self.remove_all_layers()
+        self.copy_three_workdirs(source)
         if copy_only:
             self.log("三份数据已准备完成（仅复制）")
             return
 
         self.run_pass(1, feedback, algorithm_ids)
         self.run_pass(2, feedback, algorithm_ids)
-        self.run_final_original_steps(feedback, algorithm_ids)
-        self.log("一键重构（含步骤 8、9 收尾）全部完成")
+        self.remove_all_layers()
+        self.log("一键重构（两次）全部完成")

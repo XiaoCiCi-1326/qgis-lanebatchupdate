@@ -5,12 +5,12 @@
 [general]
 name=Lane 批量刷值工具
 qgisMinimumVersion=3.0
-description=限速刷值 / ROAD_TYPE=2 / 转向个数刷值（对齐 UpdateShpLane.exe）
-version=1.0.2.1
+description=限速刷值 / ROAD_TYPE=2 / 转向个数刷值 / 一键重构
+version=1.0.3.0
 author=xiaocici
 email=2774480158@qq.com
 
-about=读取 LANE、LANE_NODE、INTERSECTION 图层，批量刷 SPEEDLIMIT 与 VIRTUAL，规则与 UpdateShpLane v1.0.1.3 一致。
+about=读取 LANE、LANE_NODE、INTERSECTION 刷 SPEEDLIMIT 与 VIRTUAL；一键重构复制三份数据并执行步骤6~9后回写 RBDY 字段。
 
 tracker=https://example.com/bugtracker
 repository=https://example.com/repo

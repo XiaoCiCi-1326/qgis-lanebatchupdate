@@ -16,6 +16,8 @@ from datetime import datetime
 import os
 import re
 
+from .reconstruct_controller import ReconstructController
+
 
 class LaneBatchUpdateTool:
     MODE_SPEED = "speed"
@@ -29,6 +31,7 @@ class LaneBatchUpdateTool:
         self.log_lines = []
         self.shp_dir = ""
         self.field_names = {}
+        self.reconstruct = ReconstructController(iface, self.plugin_dir, self.log)
 
     def initGui(self):
         buttons = (
@@ -43,12 +46,14 @@ class LaneBatchUpdateTool:
             self.iface.addVectorToolBarIcon(action)
             self.iface.addPluginToVectorMenu("车道处理工具", action)
             self.actions.append(action)
+        self.reconstruct.initGui(self.actions)
 
     def unload(self):
         for action in self.actions:
             self.iface.removeVectorToolBarIcon(action)
             self.iface.removePluginFromVectorMenu("车道处理工具", action)
         self.actions = []
+        self.reconstruct.unload()
 
     @staticmethod
     def is_empty(value):
