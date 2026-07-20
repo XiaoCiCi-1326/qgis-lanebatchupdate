@@ -173,8 +173,8 @@ class ReconstructWorkflow:
             f"请关闭对该目录图层的加载后重试。原始错误: {last_err}"
         )
 
-    def copy_three_workdirs(self, source_dir):
-        """将源目录全部文件复制三份到插件根目录（经临时目录，避免删源）。"""
+    def copy_three_workdirs(self, source_dir, keep_project_layers=False):
+        """将源目录全部文件复制三份到插件根目录（直接覆盖已有副本）。"""
         source_dir = os.path.normpath(source_dir)
         if not os.path.isdir(source_dir):
             raise RuntimeError(f"源目录不存在: {source_dir}")
@@ -182,8 +182,10 @@ class ReconstructWorkflow:
         targets = self.work_dir_paths()
         staging = os.path.join(self.plugin_dir, "_copy_staging")
 
-        self.remove_all_layers()
-        self.unload_layers_in_workdirs()
+        if keep_project_layers:
+            self.unload_layers_in_workdirs()
+        else:
+            self.remove_all_layers()
         self.iface.mapCanvas().refresh()
         gc.collect()
         time.sleep(0.3)
@@ -195,7 +197,7 @@ class ReconstructWorkflow:
                 self.unload_layers_in_dir(target)
                 self.safe_rmtree(target)
                 shutil.copytree(staging, target)
-                self.log(f"已复制到: {target}", show_bar=False)
+                self.log(f"已覆盖复制到: {target}", show_bar=False)
         finally:
             if os.path.isdir(staging):
                 shutil.rmtree(staging, ignore_errors=True)
@@ -414,6 +416,41 @@ class ReconstructWorkflow:
         del writer
         return out_path
 
+    def save_all_vector_layers(self):
+        """提交并保存工程中全部矢量图层（写入各自 shp 源文件）。"""
+        saved = 0
+        for layer in QgsProject.instance().mapLayers().values():
+            if not isinstance(layer, QgsVectorLayer) or not layer.isValid():
+                continue
+            if layer.isEditable():
+                if not layer.commitChanges():
+                    raise RuntimeError(
+                        f"图层 {layer.name()} 保存失败: "
+                        + "; ".join(layer.commitErrors())
+                    )
+                saved += 1
+                self.log(f"已保存图层: {layer.name()}", show_bar=False)
+        self.iface.mapCanvas().refresh()
+        return saved
+
+    def run_final_original_steps(self, feedback, algorithm_ids):
+        """收尾：加载「原始文件」全部 shp，执行步骤 8、9，保存并保留图层。"""
+        original_dir = os.path.join(self.plugin_dir, DIR_ORIGINAL)
+        if not os.path.isdir(original_dir):
+            raise RuntimeError(f"原始文件目录不存在: {original_dir}")
+
+        self.log(f"===== 收尾：加载原始文件并执行步骤 8、9 =====")
+        self.log(f"目录: {original_dir}", show_bar=False)
+        self.remove_all_layers()
+        self.load_all_shp_in_dir(original_dir)
+
+        processor = ReconstructProcessing(self.iface, algorithm_ids, self.log)
+        processor.run_steps_8_to_9(feedback)
+
+        count = self.save_all_vector_layers()
+        self.log(f"收尾完成，工程内保留 {len(QgsProject.instance().mapLayers())} 个图层", show_bar=False)
+        return count
+
     def ensure_workdirs(self):
         """三份目录不存在时，从当前工程图层源目录复制。"""
         if self.workdirs_ready():
@@ -481,5 +518,5 @@ class ReconstructWorkflow:
 
         self.run_pass(1, feedback, algorithm_ids)
         self.run_pass(2, feedback, algorithm_ids)
-        self.remove_all_layers()
-        self.log("一键重构（两次）全部完成")
+        self.run_final_original_steps(feedback, algorithm_ids)
+        self.log("一键重构（含步骤 8、9 收尾）全部完成")

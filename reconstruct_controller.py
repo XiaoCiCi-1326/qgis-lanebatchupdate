@@ -111,16 +111,25 @@ class ReconstructController:
         }
         title = titles.get(mode, "一键重构")
 
-        if not self._confirm(
-            title,
-            "将清空当前 QGIS 工程中的图层（不删除磁盘文件）。\n"
-            "三份副本写入插件目录：\n"
-            "  原始文件 / 删除129 / 删除11以外\n\n"
-            "请勿从上述副本目录加载图层作为源数据。\n"
-            "步骤 6~9 依赖您已安装的 QGIS 插件，耗时较长。\n"
-            "若自动找不到工具，请配置 reconstruct_algorithms.json\n\n"
-            "是否继续？",
-        ):
+        if mode == self.MODE_PREP:
+            confirm_msg = (
+                "将把源目录全部文件直接覆盖复制三份到插件目录：\n"
+                "  原始文件 / 删除129 / 删除11以外\n\n"
+                "仅卸载指向上述目录的图层（不清空整个工程）。\n\n"
+                "是否继续？"
+            )
+        else:
+            confirm_msg = (
+                "一键重构将分步处理（中间会重新加载图层）。\n"
+                "三份副本直接覆盖写入插件目录：\n"
+                "  原始文件 / 删除129 / 删除11以外\n\n"
+                "收尾会重新加载「原始文件」全部 shp，执行步骤 8、9 并保存，"
+                "完成后图层保留在工程中。\n"
+                "步骤 6~9 依赖 Z Attribute / Z Tools 工具栏按钮。\n\n"
+                "是否继续？"
+            )
+
+        if not self._confirm(title, confirm_msg):
             return
 
         progress = QProgressDialog(f"正在执行: {title}", "取消", 0, 0, self.iface.mainWindow())
@@ -137,8 +146,8 @@ class ReconstructController:
             if mode == self.MODE_PREP:
                 source, _ = self._resolve_source_with_dialog(workflow, require_source=True)
                 workflow.data_dir = source
-                workflow.copy_three_workdirs(source)
-                done = f"三份数据已复制到插件目录\n源: {source}"
+                workflow.copy_three_workdirs(source, keep_project_layers=True)
+                done = f"三份数据已覆盖复制到插件目录\n源: {source}"
             elif mode == self.MODE_FULL:
                 source, _ = self._resolve_source_with_dialog(workflow, require_source=False)
                 workflow.run_full(
@@ -147,7 +156,7 @@ class ReconstructController:
                     copy_only=False,
                     source_dir=source,
                 )
-                done = "一键重构（两次）全部完成"
+                done = "一键重构全部完成（含步骤 8、9，图层已保留在工程中）"
             else:
                 return
 
