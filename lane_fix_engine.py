@@ -19,6 +19,7 @@ _FIELD_ALIASES = {
     "RBDY_R": ("RBDY_R", "BDYID_R", "bdyid_r"),
     "ID": ("ID",),
     "ROAD_ID": ("ROAD_ID", "LINKID", "LINK_ID"),
+    "LEFT_RVS": ("LEFT_RVS", "LEFT_RVS", "left_rvs"),
 }
 
 
@@ -59,7 +60,7 @@ class LaneFixEngine:
             return []
         return [
             LaneFixEngine.norm_id(part)
-            for part in re.split(r"[|,;]", str(raw))
+            for part in re.split(r"[|,;；]", str(raw))
             if LaneFixEngine.norm_id(part)
         ]
 
@@ -281,3 +282,87 @@ class LaneFixEngine:
 
         stats["features_updated"] = len(touched)
         return stats
+
+    def infer_rbdy_from_bdy(self, road_ids: List[str]) -> int:
+        """同 link 上汇总各 lane 的 BDY_LEFT/BDY_RIGHT，补全 RBDY_L/RBDY_R 并集。"""
+        if not road_ids:
+            return 0
+        bdy_l = self._resolve_actual_field("BDY_LEFT")
+        bdy_r = self._resolve_actual_field("BDY_RIGHT")
+        rbdy_l = self._resolve_actual_field("RBDY_L")
+        rbdy_r = self._resolve_actual_field("RBDY_R")
+        if not all([bdy_l, bdy_r, rbdy_l, rbdy_r]):
+            self.log("跳过 BDY→RBDY 推断：缺少 BDY 或 RBDY 字段", show_bar=False)
+            return 0
+
+        updated = 0
+        if not self.lane_layer.startEditing():
+            raise RuntimeError("LANE 图层无法进入编辑模式（推断 BDY→RBDY）")
+
+        try:
+            for road_id in road_ids:
+                feat_ids = self.lane_by_road.get(road_id, [])
+                if not feat_ids:
+                    continue
+                union_l: List[str] = []
+                union_r: List[str] = []
+                for fid in feat_ids:
+                    feat = self.lane_layer.getFeature(fid)
+                    union_l.extend(self.split_ids(feat[bdy_l]))
+                    union_r.extend(self.split_ids(feat[bdy_r]))
+                union_l = list(dict.fromkeys(union_l))
+                union_r = list(dict.fromkeys(union_r))
+                if not union_l and not union_r:
+                    continue
+                for fid in feat_ids:
+                    feat = self.lane_layer.getFeature(fid)
+                    new_l, changed_l = self._add_ids(feat[rbdy_l], union_l)
+                    new_r, changed_r = self._add_ids(feat[rbdy_r], union_r)
+                    if not changed_l and not changed_r:
+                        continue
+                    if changed_l:
+                        feat[rbdy_l] = new_l if new_l else None
+                    if changed_r:
+                        feat[rbdy_r] = new_r if new_r else None
+                    self.lane_layer.updateFeature(feat)
+                    updated += 1
+            if not self.lane_layer.commitChanges():
+                errors = "; ".join(self.lane_layer.commitErrors())
+                self.lane_layer.rollBack()
+                raise RuntimeError(f"BDY→RBDY 推断保存失败: {errors}")
+        except Exception:
+            self.lane_layer.rollBack()
+            raise
+
+        if updated:
+            self.log(
+                f"BDY→RBDY 推断：link {len(road_ids)} 组，更新 {updated} 条要素",
+                show_bar=False,
+            )
+        return updated
+
+    def apply_all(self, actions: List[LaneFixAction], infer_road_ids: List[str]) -> Dict[str, int]:
+        """多轮应用 + BDY 推断（同一次编辑会话尽量刷完）。"""
+        total = {
+            "total": len(actions),
+            "applied": 0,
+            "skipped": 0,
+            "not_found": 0,
+            "features_updated": 0,
+            "infer_updated": 0,
+            "rounds": 0,
+        }
+        for round_no in range(1, 4):
+            stats = self.apply_actions(actions)
+            total["rounds"] = round_no
+            for key in ("applied", "skipped", "not_found", "features_updated"):
+                total[key] += stats[key]
+            self._index_features()
+            infer_count = self.infer_rbdy_from_bdy(infer_road_ids)
+            total["infer_updated"] += infer_count
+            self._index_features()
+            if stats["applied"] == 0 and infer_count == 0:
+                break
+            self.log(f"第 {round_no} 轮改错完成，继续检查…", show_bar=False)
+        return total
+

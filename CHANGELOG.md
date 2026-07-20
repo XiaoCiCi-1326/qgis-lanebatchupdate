@@ -1,5 +1,9 @@
 # 更新日志
 
+## v1.0.4.3
+- Excel边线改错：支持多 ID 缺失/侧位错误、LEFT_RVS 互挂、错误关联删除
+- 修复坐标误识别为边线 ID；同 link 从 BDY 推断补 RBDY；最多 3 轮修复
+
 ## v1.0.4.2
 - Excel边线改错：支持「左右侧位错误」（边线 ID 从 RBDY_L 移到 RBDY_R 等），同步 BDY_LEFT/BDY_RIGHT
 
