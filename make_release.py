@@ -59,6 +59,9 @@ INSTALL_README = """Lane 批量刷值工具 — 安装说明
 【日志】
 运行日志写入插件目录下 log/ 文件夹。
 
+【项目】
+https://github.com/XiaoCiCi-1326/qgis-lanebatchupdate
+
 【联系】
 制作人：石天赐
 2774480158@qq.com
