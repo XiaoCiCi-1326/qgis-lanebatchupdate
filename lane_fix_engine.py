@@ -6,7 +6,7 @@ from __future__ import annotations
 import re
 from typing import Callable, Dict, List, Optional, Tuple
 
-from qgis.core import QgsVectorLayer
+from qgis.core import QgsProject, QgsVectorLayer
 
 from .lane_fix_excel import LaneFixAction
 
@@ -141,8 +141,25 @@ class LaneFixEngine:
         "BDY_RIGHT": ("RBDY_R", "RBDY_L"),
     }
 
+    def _classify_move_ids(self, from_val, to_val, mark_ids: List[str]):
+        """区分侧位移动与错误关联删除（如 ID 仅在目标侧出现）。"""
+        from_ids = self.split_ids(from_val)
+        to_ids = self.split_ids(to_val)
+        move_list = []
+        remove_list = []
+        for mark_id in mark_ids:
+            if not mark_id:
+                continue
+            in_from = mark_id in from_ids
+            in_to = mark_id in to_ids
+            if in_from:
+                move_list.append(mark_id)
+            elif in_to:
+                remove_list.append(mark_id)
+        return move_list, remove_list
+
     def _apply_field_move(self, feat, field_from, field_to, mark_ids):
-        """单字段或成对字段移动边线 ID。"""
+        """单字段或成对字段移动边线 ID；不在源侧但在目标侧则改为删除。"""
         changed_any = False
         pairs = [(field_from, field_to)]
         sync = self._LMARK_SYNC.get(field_from)
@@ -156,13 +173,22 @@ class LaneFixEngine:
             actual_to = self._resolve_actual_field(logical_to)
             if not actual_from or not actual_to:
                 continue
-            new_from, new_to, changed = self._move_ids(
+            move_list, remove_list = self._classify_move_ids(
                 feat[actual_from], feat[actual_to], mark_ids
             )
+            cur_from = feat[actual_from]
+            cur_to = feat[actual_to]
+            changed = False
+            if move_list:
+                cur_from, cur_to, moved = self._move_ids(cur_from, cur_to, move_list)
+                changed = changed or moved
+            if remove_list:
+                cur_to, removed = self._remove_ids(cur_to, remove_list)
+                changed = changed or removed
             if not changed:
                 continue
-            feat[actual_from] = new_from if new_from else None
-            feat[actual_to] = new_to if new_to else None
+            feat[actual_from] = cur_from if cur_from else None
+            feat[actual_to] = cur_to if cur_to else None
             changed_any = True
         return changed_any
 
@@ -261,7 +287,7 @@ class LaneFixEngine:
                     stats["applied"] += 1
                     if action.action == "move":
                         self.log(
-                            f"laneid={action.match_value} move {action.mark_ids} "
+                            f"laneid={action.match_value} move/remove {action.mark_ids} "
                             f"{action.target_field}->{action.target_field_to} OK",
                             show_bar=False,
                         )
@@ -341,8 +367,122 @@ class LaneFixEngine:
             )
         return updated
 
+    @staticmethod
+    def _find_road_link_layer():
+        """从工程内查找 ROAD_LINK 图层。"""
+        project = QgsProject.instance()
+        for name in ("ROAD_LINK", "ROAD"):
+            layers = project.mapLayersByName(name)
+            for layer in layers:
+                if isinstance(layer, QgsVectorLayer) and layer.isValid():
+                    return layer
+        return None
+
+    def _resolve_road_link_fields(self, layer: QgsVectorLayer):
+        """解析 ROAD_LINK 的 link 与 BDYID 字段名。"""
+        upper = {field.name().upper(): field.name() for field in layer.fields()}
+        link_field = None
+        for alias in ("LINKID", "LINK_ID", "ID", "ROAD_ID"):
+            if alias in upper:
+                link_field = upper[alias]
+                break
+        bdy_l = None
+        bdy_r = None
+        for alias in ("BDYID_L", "RBDY_L"):
+            if alias in upper:
+                bdy_l = upper[alias]
+                break
+        for alias in ("BDYID_R", "RBDY_R"):
+            if alias in upper:
+                bdy_r = upper[alias]
+                break
+        return link_field, bdy_l, bdy_r
+
+    def sync_road_link_rbdy(self, road_ids: List[str]) -> int:
+        """将 LANE 上汇总的 RBDY_L/R 写回 ROAD_LINK 的 BDYID_L/R（质检读 link 层）。"""
+        if not road_ids:
+            return 0
+        road_layer = self._find_road_link_layer()
+        if road_layer is None:
+            self.log("未加载 ROAD_LINK 图层，跳过 link 同步", show_bar=False)
+            return 0
+
+        link_field, bdy_l_field, bdy_r_field = self._resolve_road_link_fields(road_layer)
+        rbdy_l = self._resolve_actual_field("RBDY_L")
+        rbdy_r = self._resolve_actual_field("RBDY_R")
+        missing = [
+            name
+            for name, val in (
+                ("link", link_field),
+                ("BDYID_L", bdy_l_field),
+                ("BDYID_R", bdy_r_field),
+                ("LANE.RBDY_L", rbdy_l),
+                ("LANE.RBDY_R", rbdy_r),
+            )
+            if not val
+        ]
+        if missing:
+            self.log(f"跳过 ROAD_LINK 同步，缺少字段: {', '.join(missing)}", show_bar=False)
+            return 0
+
+        road_set = set(road_ids)
+        link_to_fid = {}
+        for feat in road_layer.getFeatures():
+            link_id = self.norm_id(feat[link_field])
+            if link_id in road_set:
+                link_to_fid[link_id] = feat.id()
+
+        if not link_to_fid:
+            self.log("ROAD_LINK 中未找到待同步 link", show_bar=False)
+            return 0
+
+        if not road_layer.startEditing():
+            raise RuntimeError("ROAD_LINK 图层无法进入编辑模式")
+
+        updated = 0
+        try:
+            for road_id in road_ids:
+                fid = link_to_fid.get(road_id)
+                feat_ids = self.lane_by_road.get(road_id, [])
+                if fid is None or not feat_ids:
+                    continue
+                union_l: List[str] = []
+                union_r: List[str] = []
+                for lane_fid in feat_ids:
+                    lane_feat = self.lane_layer.getFeature(lane_fid)
+                    union_l.extend(self.split_ids(lane_feat[rbdy_l]))
+                    union_r.extend(self.split_ids(lane_feat[rbdy_r]))
+                union_l = list(dict.fromkeys(union_l))
+                union_r = list(dict.fromkeys(union_r))
+                link_feat = road_layer.getFeature(fid)
+                new_l = self._join_ids(union_l)
+                new_r = self._join_ids(union_r)
+                cur_l = set(self.split_ids(link_feat[bdy_l_field]))
+                cur_r = set(self.split_ids(link_feat[bdy_r_field]))
+                if cur_l == set(union_l) and cur_r == set(union_r):
+                    continue
+                link_feat[bdy_l_field] = new_l if new_l else None
+                link_feat[bdy_r_field] = new_r if new_r else None
+                road_layer.updateFeature(link_feat)
+                updated += 1
+            if not road_layer.commitChanges():
+                errors = "; ".join(road_layer.commitErrors())
+                road_layer.rollBack()
+                raise RuntimeError(f"ROAD_LINK 同步保存失败: {errors}")
+        except Exception:
+            road_layer.rollBack()
+            raise
+
+        if updated:
+            road_layer.triggerRepaint()
+            self.log(
+                f"ROAD_LINK 同步：{updated} 条 link 的 BDYID_L/R 已与 LANE 对齐",
+                show_bar=False,
+            )
+        return updated
+
     def apply_all(self, actions: List[LaneFixAction], infer_road_ids: List[str]) -> Dict[str, int]:
-        """多轮应用 + BDY 推断（同一次编辑会话尽量刷完）。"""
+        """多轮应用 + BDY 推断 + ROAD_LINK 同步（尽量一次刷完）。"""
         total = {
             "total": len(actions),
             "applied": 0,
@@ -350,8 +490,14 @@ class LaneFixEngine:
             "not_found": 0,
             "features_updated": 0,
             "infer_updated": 0,
+            "road_link_updated": 0,
             "rounds": 0,
         }
+        sync_roads = list(dict.fromkeys(infer_road_ids))
+        for action in actions:
+            if action.match_field == "ROAD_ID" and action.match_value not in sync_roads:
+                sync_roads.append(action.match_value)
+
         for round_no in range(1, 4):
             stats = self.apply_actions(actions)
             total["rounds"] = round_no
@@ -361,7 +507,10 @@ class LaneFixEngine:
             infer_count = self.infer_rbdy_from_bdy(infer_road_ids)
             total["infer_updated"] += infer_count
             self._index_features()
-            if stats["applied"] == 0 and infer_count == 0:
+            link_count = self.sync_road_link_rbdy(sync_roads)
+            total["road_link_updated"] += link_count
+            self._index_features()
+            if stats["applied"] == 0 and infer_count == 0 and link_count == 0:
                 break
             self.log(f"第 {round_no} 轮改错完成，继续检查…", show_bar=False)
         return total

@@ -126,7 +126,8 @@ class LaneFixController:
                 f"已解析 {len(actions)} 条指令\n"
                 f"  可自动修复: {auto_count} 条\n"
                 f"  需手动处理: {skip_count} 条\n"
-                f"  BDY→RBDY 推断 link: {len(infer_links)} 组\n\n"
+                f"  BDY→RBDY 推断 link: {len(infer_links)} 组\n"
+                f"  同步 ROAD_LINK BDYID\n\n"
                 f"将多轮尝试修复（最多 3 轮），然后执行步骤 8、9 并保存。\n\n"
                 f"是否继续？",
                 QMessageBox.Yes | QMessageBox.No,
@@ -152,6 +153,7 @@ class LaneFixController:
                 f"执行轮次 {stats['rounds']} 轮\n"
                 f"成功改字段 {stats['applied']} 次\n"
                 f"BDY推断更新 {stats['infer_updated']} 条\n"
+                f"ROAD_LINK同步 {stats['road_link_updated']} 条\n"
                 f"更新要素 {stats['features_updated']} 条\n"
                 f"未找到车道 {stats['not_found']} 条\n"
                 f"跳过 {stats['skipped']} 条\n"
