@@ -113,7 +113,7 @@ class LaneFixController:
                     "· left_rvs 互挂补充 / 顺序交换\n"
                     "· RBDY/BDY 缺失、左右侧位错误、错误关联删除\n"
                     "· LINKID= 格式 2.2/2.3 不应记录、缺失与空 RBDY\n"
-                    "· RBDY 为空时从 BDY_LEFT/RIGHT 并集补线段\n\n"
+                    "· RBDY 为空时：优先从对向车道 LEFT_RVS 推断；无对向则从同 link BDY 并集补\n\n"
                     "路沿石冲突(2.1)、BDY 也为空需查 BOUNDARY 等仍须手动。",
                 )
                 return

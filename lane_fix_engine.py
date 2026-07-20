@@ -227,7 +227,7 @@ class LaneFixEngine:
                     self.log(f"跳过(无字段): {action.target_field}", show_bar=False)
                     continue
 
-                if not action.mark_ids and action.action not in ("skip", "fill_from_bdy"):
+                if not action.mark_ids and action.action not in ("skip", "fill_from_bdy", "fill_from_lrvs"):
                     stats["skipped"] += 1
                     self.log(f"跳过(无边线ID): {action.source_text[:80]}", show_bar=False)
                     continue
@@ -243,6 +243,22 @@ class LaneFixEngine:
                         stats["skipped"] += 1
                         self.log(
                             f"跳过(无法从BDY补): ROAD_ID={action.match_value} "
+                            f"{action.target_field} {action.source_text[:60]}",
+                            show_bar=False,
+                        )
+                    continue
+
+                if action.action == "fill_from_lrvs":
+                    count = self._fill_empty_rbdy_from_lrvs(
+                        action.match_value, action.target_field
+                    )
+                    if count:
+                        stats["applied"] += count
+                        stats["features_updated"] += count
+                    else:
+                        stats["skipped"] += 1
+                        self.log(
+                            f"跳过(无法从对向车道补): ROAD_ID={action.match_value} "
                             f"{action.target_field} {action.source_text[:60]}",
                             show_bar=False,
                         )
@@ -337,6 +353,60 @@ class LaneFixEngine:
 
         stats["features_updated"] = len(touched)
         return stats
+
+    def _fill_empty_rbdy_from_lrvs(self, road_id: str, logical_rbdy: str) -> int:
+        """
+        RBDY_L/R 为空时，从对向车道的 LEFT_RVS → BDY_LEFT 推断。
+        规则：lane A.RBDY_L 为空 → 找 A.LEFT_RVS 对向 lane B → A.RBDY_L = B.BDY_LEFT
+              lane A.RBDY_R 为空 → 找 A.RIGHT_RVS 对向 lane C → A.RBDY_R = C.BDY_RIGHT
+        """
+        rev_field = self._resolve_actual_field("LEFT_RVS")
+        bdy_src = self._resolve_actual_field("BDY_LEFT")
+        rbdy_field = self._resolve_actual_field(logical_rbdy)
+        if logical_rbdy == "RBDY_R":
+            rev_field = self._resolve_actual_field("RIGHT_RVS")
+            bdy_src = self._resolve_actual_field("BDY_RIGHT")
+
+        if not all([rev_field, bdy_src, rbdy_field]):
+            return 0
+
+        # 找 road_id 下所有 lane
+        feat_ids = self.lane_by_road.get(road_id, [])
+        if not feat_ids:
+            return 0
+
+        self.lane_layer.startEditing()
+        updated = 0
+        try:
+            for fid in feat_ids:
+                feat = self.lane_layer.getFeature(fid)
+                if not self.is_empty(feat[rbdy_field]):
+                    continue
+                rev_ids = self.split_ids(feat[rev_field])
+                if not rev_ids:
+                    continue
+                # 取第一个对向车道
+                rev_lane_id = rev_ids[0]
+                rev_fid = self.lane_by_id.get(rev_lane_id)
+                if rev_fid is None:
+                    continue
+                rev_feat = self.lane_layer.getFeature(rev_fid)
+                bdy_value = rev_feat[bdy_src]
+                if self.is_empty(bdy_value):
+                    continue
+                feat[rbdy_field] = bdy_value
+                self.lane_layer.updateFeature(feat)
+                updated += 1
+                self.log(
+                    f"laneid={self.norm_id(feat['ID'])} "
+                    f"{logical_rbdy}={bdy_value} (从对向 lane {rev_lane_id}.{bdy_src} 推断)",
+                    show_bar=False,
+                )
+            self.lane_layer.commitChanges()
+        except Exception:
+            self.lane_layer.rollBack()
+            raise
+        return updated
 
     def _fill_empty_rbdy_from_bdy(self, road_id: str, logical_rbdy: str) -> int:
         """RBDY_L/R 为空时，仅用同 link 上 BDY_LEFT/BDY_RIGHT 并集回填（对齐规则表 2.3）。"""

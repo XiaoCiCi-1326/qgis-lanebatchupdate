@@ -12,11 +12,11 @@ from pathlib import Path
 from typing import Iterable, List, Optional
 
 
-@dataclass
+    @dataclass
 class LaneFixAction:
     """单条改错指令。"""
 
-    action: str  # add / remove / skip / move / infer_bdy
+    action: str  # add / remove / skip / move / swap / fill_from_lrvs / fill_from_bdy
     target_field: str
     match_field: str  # ID / ROAD_ID
     match_value: str
@@ -89,8 +89,6 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
         return []
 
     compact = re.sub(r"\s+", " ", raw)
-
-    # 1.2 LEFT_RVS groupID 顺序交换
     if "left_rvs" in compact.lower() and "顺序不对" in compact:
         lane_id = _extract_lane_id(compact)
         seg = re.search(r"group\s*id[【\[]?\s*([^】\]]+)", compact, re.IGNORECASE)
@@ -120,7 +118,9 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
     link_id = _extract_link_id(compact)
     lane_id = _extract_lane_id(compact)
 
-    # 2.3 bdyid_l/r 为空 → 从同 link 各 lane 的 BDY_LEFT/BDY_RIGHT 并集回填 RBDY
+    # 2.3 bdyid_l/r 为空 → 从对向车道 LEFT_RVS 的 BDY_LEFT 推断 RBDY_L
+    # 规则：lane A.RBDY_L 为空 → 找 A.LEFT_RVS 对向 lane B → A.RBDY_L = B.BDY_LEFT
+    # 同理 lane A.RBDY_R 为空 → 找 A.RIGHT_RVS 对向 lane C → A.RBDY_R = C.BDY_RIGHT
     if link_id and re.search(r"bdyid_[lr]是空的", compact, re.IGNORECASE):
         if "bdyid_r" in compact.lower():
             field = "RBDY_R"
@@ -128,8 +128,8 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
             field = "RBDY_L"
         return [
             LaneFixAction(
-                "fill_from_bdy", field, "ROAD_ID", link_id, [], raw,
-                note="RBDY 为空，从 BDY 并集补线段",
+                "fill_from_lrvs", field, "ROAD_ID", link_id, [], raw,
+                note="RBDY 为空，从对向车道 LEFT_RVS/BDY_LEFT 推断",
             )
         ]
 
