@@ -48,14 +48,55 @@ class ReconstructProcessing:
         return self._match_algorithm(groups)
 
     def select_all_layers(self):
-        """选中工程中全部图层（供部分插件读取选择集）。"""
+        """选中工程中全部图层（供部分插件读取选择集，兼容 QGIS 3.32）。"""
         layers = [
             layer
             for layer in QgsProject.instance().mapLayers().values()
             if layer is not None
         ]
-        if layers and self.iface.layerTreeView():
-            self.iface.layerTreeView().setSelectedLayers(layers)
+        if not layers or not self.iface:
+            return len(layers)
+
+        view = self.iface.layerTreeView()
+        if not view:
+            return len(layers)
+
+        # QGIS 3.34+ 才有 setSelectedLayers
+        if hasattr(view, "setSelectedLayers"):
+            view.setSelectedLayers(layers)
+            return len(layers)
+
+        from qgis.PyQt.QtCore import QItemSelectionModel
+        from qgis.PyQt.QtWidgets import QAbstractItemView
+
+        model = view.layerTreeModel()
+        if model is None:
+            return len(layers)
+
+        old_mode = view.selectionMode()
+        sel = view.selectionModel()
+        sel.clearSelection()
+
+        # 优先用 selection model 逐层选中
+        selected = 0
+        for layer in layers:
+            node = model.rootGroup().findLayer(layer.id())
+            if node is None:
+                continue
+            index = model.node2index(node)
+            if index.isValid():
+                sel.select(index, QItemSelectionModel.Select)
+                selected += 1
+
+        if selected == 0:
+            # 兜底：MultiSelection 模式下多次 setCurrentLayer
+            view.setSelectionMode(QAbstractItemView.MultiSelection)
+            for layer in layers:
+                view.setCurrentLayer(layer)
+            view.setSelectionMode(old_mode)
+        else:
+            view.setSelectionMode(old_mode)
+
         return len(layers)
 
     def run_menu_action(self, keywords):
