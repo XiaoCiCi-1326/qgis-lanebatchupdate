@@ -186,18 +186,22 @@ class LaneFixEngine:
 
     def _fill_empty_rbdy_from_lrvs(self, road_id: str, logical_rbdy: str) -> int:
         """
-        RBDY_L/R 为空时，从对向车道的 LEFT_RVS → BDY_LEFT 推断。
-        规则：lane A.RBDY_L 为空 → 找 A.LEFT_RVS 对向 lane B → A.RBDY_L = B.BDY_LEFT
-              lane A.RBDY_R 为空 → 找 A.RIGHT_RVS 对向 lane C → A.RBDY_R = C.BDY_RIGHT
+        RBDY_L/R 为空时推断补全，兜底策略：
+        1. RBDY_L → 优先 LEFT_RVS 对向 lane.BDY_LEFT
+        2. RBDY_L → 其次 RIGHT_RVS 对向 lane.BDY_RIGHT
+        3. RBDY_L → 最后用本车道 BDY_LEFT
+        4. RBDY_R → 优先 RIGHT_RVS 对向 lane.BDY_RIGHT
+        5. RBDY_R → 其次 LEFT_RVS 对向 lane.BDY_LEFT
+        6. RBDY_R → 最后用本车道 BDY_RIGHT
         """
-        rev_field = self._resolve_actual_field("LEFT_RVS")
-        bdy_src = self._resolve_actual_field("BDY_LEFT")
+        rev_fields = (
+            [("LEFT_RVS", "BDY_LEFT"), ("RIGHT_RVS", "BDY_RIGHT")]
+            if logical_rbdy == "RBDY_L"
+            else [("RIGHT_RVS", "BDY_RIGHT"), ("LEFT_RVS", "BDY_LEFT")]
+        )
+        own_bdy = self._resolve_actual_field("BDY_LEFT" if logical_rbdy == "RBDY_L" else "BDY_RIGHT")
         rbdy_field = self._resolve_actual_field(logical_rbdy)
-        if logical_rbdy == "RBDY_R":
-            rev_field = self._resolve_actual_field("RIGHT_RVS")
-            bdy_src = self._resolve_actual_field("BDY_RIGHT")
-
-        if not all([rev_field, bdy_src, rbdy_field]):
+        if not rbdy_field:
             return 0
 
         feat_ids = self.lane_by_road.get(road_id, [])
@@ -212,24 +216,48 @@ class LaneFixEngine:
                 feat = self.lane_layer.getFeature(fid)
                 if not self.is_empty(feat[rbdy_field]):
                     continue
-                rev_ids = self.split_ids(feat[rev_field])
-                if not rev_ids:
-                    continue
-                rev_fid = self.lane_by_id.get(rev_ids[0])
-                if rev_fid is None:
-                    continue
-                rev_feat = self.lane_layer.getFeature(rev_fid)
-                bdy_val = rev_feat[bdy_src]
-                if self.is_empty(bdy_val):
-                    continue
-                feat[rbdy_field] = bdy_val
-                self.lane_layer.updateFeature(feat)
-                updated += 1
-                self.log(
-                    f"laneid={self.norm_id(feat['ID'])} {logical_rbdy}={bdy_val} "
-                    f"(←对向lane {rev_ids[0]}.{bdy_src} 推断)",
-                    show_bar=False,
-                )
+
+                filled = False
+                # 策略 1/2：先从对向车道推断
+                for rev_name, bdy_name in rev_fields:
+                    rev_f = self._resolve_actual_field(rev_name)
+                    bdy_f = self._resolve_actual_field(bdy_name)
+                    if not (rev_f and bdy_f):
+                        continue
+                    rev_ids = self.split_ids(feat[rev_f])
+                    if not rev_ids:
+                        continue
+                    rev_fid = self.lane_by_id.get(rev_ids[0])
+                    if rev_fid is None:
+                        continue
+                    rev_feat = self.lane_layer.getFeature(rev_fid)
+                    bdy_val = rev_feat[bdy_f]
+                    if self.is_empty(bdy_val):
+                        continue
+                    feat[rbdy_field] = bdy_val
+                    self.lane_layer.updateFeature(feat)
+                    updated += 1
+                    self.log(
+                        f"laneid={self.norm_id(feat['ID'])} {logical_rbdy}={bdy_val} "
+                        f"(←对向lane {rev_ids[0]}.{bdy_name} 推断)",
+                        show_bar=False,
+                    )
+                    filled = True
+                    break
+
+                # 策略 3/6：本车道 BDY 直接兜底
+                if not filled and own_bdy:
+                    bdy_val = feat[own_bdy]
+                    if not self.is_empty(bdy_val):
+                        feat[rbdy_field] = bdy_val
+                        self.lane_layer.updateFeature(feat)
+                        updated += 1
+                        self.log(
+                            f"laneid={self.norm_id(feat['ID'])} {logical_rbdy}={bdy_val} "
+                            f"(←本车道 {own_bdy} 兜底)",
+                            show_bar=False,
+                        )
+
             if not self.lane_layer.commitChanges():
                 self.lane_layer.rollBack()
                 return 0
