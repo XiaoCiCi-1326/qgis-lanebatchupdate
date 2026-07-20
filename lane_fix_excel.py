@@ -44,6 +44,31 @@ def _digits_from_segment(text: str) -> List[str]:
     return list(dict.fromkeys(ids))
 
 
+def _extract_link_id(compact: str) -> Optional[str]:
+    """从 linkid / LINKID= 等格式提取 link ID。"""
+    for pat in (
+        r"link\s*id\s*[：:=]\s*(\d{6,})",
+        r"linkid\s*[：:=]\s*(\d{6,})",
+    ):
+        m = re.search(pat, compact, re.IGNORECASE)
+        if m:
+            return m.group(1)
+    return None
+
+
+def _extract_lane_id(compact: str) -> Optional[str]:
+    """从 lane id / lane【123】 等格式提取 lane ID。"""
+    for pat in (
+        r"lane\s*id\s*[=:：]?\s*(\d{6,})",
+        r"lane[【\[]\s*(\d{6,})\s*[】\]]",
+        r"lane[是为：:\s]+(\d{6,})",
+    ):
+        m = re.search(pat, compact, re.IGNORECASE)
+        if m:
+            return m.group(1)
+    return None
+
+
 def _pick_problem_cells(cells: List[str]) -> List[str]:
     """只取「问题描述」单元格，避免把 X/Y 坐标误当边线 ID。"""
     for cell in cells:
@@ -65,6 +90,19 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
 
     compact = re.sub(r"\s+", " ", raw)
 
+    # 1.2 LEFT_RVS groupID 顺序交换
+    if "left_rvs" in compact.lower() and "顺序不对" in compact:
+        lane_id = _extract_lane_id(compact)
+        seg = re.search(r"group\s*id[【\[]?\s*([^】\]]+)", compact, re.IGNORECASE)
+        mark_ids = _digits_from_segment(seg.group(1) if seg else compact)
+        if lane_id and len(mark_ids) >= 2:
+            return [
+                LaneFixAction(
+                    "swap", "LEFT_RVS", "ID", lane_id, mark_ids[:2], raw,
+                    note="left_rvs 交换顺序",
+                )
+            ]
+
     # 1.1 LEFT_RVS 互挂缺失
     mutual = re.search(
         r"(\d{6,})与(\d{6,})互为对方left_rvs.*?均未被对方记录",
@@ -73,19 +111,21 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
     )
     if mutual:
         lane_a, lane_b = mutual.group(1), mutual.group(2)
-        note = "left_rvs 互相补充"
+        note = "left_rvs 互挂前置补充"
         return [
             LaneFixAction("add", "LEFT_RVS", "ID", lane_a, [lane_b], raw, note=note),
             LaneFixAction("add", "LEFT_RVS", "ID", lane_b, [lane_a], raw, note=note),
         ]
 
-    link_m = re.search(r"link\s*id\s*[：:\s]*(\d{6,})", compact, re.IGNORECASE)
-    link_id = link_m.group(1) if link_m else None
-    lane_m = re.search(r"lane\s*id\s*[=:：]?\s*(\d{6,})", compact, re.IGNORECASE)
+    link_id = _extract_link_id(compact)
+    lane_id = _extract_lane_id(compact)
 
-    # 2.6 缺失边线（支持多个 ID，分号/逗号分隔）
-    if link_id and "缺失了边线" in compact:
-        seg = re.search(r"缺失了边线[：:\s]*(.+)", compact)
+    # 2.3 / 2.6 缺失边线（支持「缺失边线」「缺失了边线」）
+    if link_id and re.search(r"缺失了?边线", compact):
+        if "缺失了边线" in compact:
+            seg = re.search(r"缺失了边线[：:\s]*(.+)", compact)
+        else:
+            seg = re.search(r"缺失边线[：:\s]*(.+)", compact)
         mark_ids = _digits_from_segment(seg.group(1) if seg else compact)
         if "bdyid_r" in compact.lower() or "右侧" in compact:
             field = "RBDY_R"
@@ -148,14 +188,13 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
                 ]
 
     # lane 级 lmark 左右侧位
-    if lane_m and "左右侧位错误" in compact:
+    if lane_id and "左右侧位错误" in compact:
         seg = re.search(
             r"关联的边线\s*id?\s*([^左右]+?)左右侧位错误",
             compact,
             re.IGNORECASE,
         )
         mark_ids = _digits_from_segment(seg.group(1) if seg else compact)
-        lane_id = lane_m.group(1)
         if mark_ids and ("lmark_l" in compact.lower() or "左侧" in compact):
             return [
                 LaneFixAction(
@@ -164,13 +203,27 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
                 )
             ]
 
-    # 不应记录边线
-    if link_id and "不应记录边线" in compact:
-        seg = re.search(r"lanemark\s*id\s*[=:：]?\s*([\d,，；;\s]+)", compact, re.I)
+    # 2.2 不应记录边线（含 LINKID= / LANEMARKID= 格式）
+    if link_id and "不应记录" in compact and "边线" in compact:
+        seg = re.search(
+            r"lanemark\s*id\s*[=:：]?\s*([\d,，；;\s]+)",
+            compact,
+            re.I,
+        )
         mark_ids = _digits_from_segment(seg.group(1) if seg else compact)
         if mark_ids:
-            field = "RBDY_L" if "bdyid_l" in compact.lower() or "左侧" in compact else "RBDY_R"
-            return [LaneFixAction("remove", field, "ROAD_ID", link_id, mark_ids, raw)]
+            if "bdyid_l" in compact.lower() or "左侧" in compact:
+                field = "RBDY_L"
+            elif "bdyid_r" in compact.lower() or "右侧" in compact:
+                field = "RBDY_R"
+            else:
+                field = "RBDY_L"
+            return [
+                LaneFixAction(
+                    "remove", field, "ROAD_ID", link_id, mark_ids, raw,
+                    note="不应记录边线",
+                )
+            ]
 
     # 旧版单 ID 模式（兼容 ProcessShpFiles 文案）
     legacy = _parse_legacy_patterns(compact, raw)
@@ -304,6 +357,14 @@ def load_table_rows(path: str) -> List[List[str]]:
     raise RuntimeError("请选择 .xlsx / .csv 格式的错误表格")
 
 
+_ACTION_ORDER = {"remove": 0, "move": 1, "swap": 2, "add": 3, "skip": 9}
+
+
+def sort_fix_actions(actions: List[LaneFixAction]) -> List[LaneFixAction]:
+    """先删后移后补，避免 infer/补边线引发错误关联。"""
+    return sorted(actions, key=lambda item: (_ACTION_ORDER.get(item.action, 5), item.match_value))
+
+
 def parse_fix_actions(path: str) -> List[LaneFixAction]:
     """读取表格并解析全部可识别改错项。"""
     rows = load_table_rows(path)
@@ -329,15 +390,4 @@ def parse_fix_actions(path: str) -> List[LaneFixAction]:
                     continue
                 seen.add(key)
                 actions.append(action)
-    return actions
-
-
-def collect_infer_road_ids(actions: List[LaneFixAction]) -> List[str]:
-    """收集需要从 BDY 推断 RBDY 的 link（缺失/补边线类）。"""
-    ids = []
-    for action in actions:
-        if action.match_field != "ROAD_ID":
-            continue
-        if action.action in ("add", "move") and action.target_field in ("RBDY_L", "RBDY_R"):
-            ids.append(action.match_value)
-    return list(dict.fromkeys(ids))
+    return sort_fix_actions(actions)

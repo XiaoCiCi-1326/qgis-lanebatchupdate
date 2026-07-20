@@ -12,7 +12,7 @@ from qgis.PyQt.QtWidgets import QAction, QFileDialog, QMessageBox, QProgressDial
 from qgis.core import QgsProject, QgsVectorLayer
 
 from .lane_fix_engine import LaneFixEngine
-from .lane_fix_excel import collect_infer_road_ids, parse_fix_actions
+from .lane_fix_excel import parse_fix_actions
 from .reconstruct_config import load_algorithm_ids
 from .reconstruct_feedback import ReconstructFeedback
 from .reconstruct_workflow import ReconstructWorkflow
@@ -110,25 +110,22 @@ class LaneFixController:
                     "未识别到可修复项",
                     "表格中没有解析到可自动修复的错误。\n\n"
                     "当前支持：\n"
-                    "· left_rvs 互挂补充\n"
+                    "· left_rvs 互挂补充 / 顺序交换\n"
                     "· RBDY/BDY 缺失、左右侧位错误、错误关联删除\n"
-                    "· 同 link 从 BDY 推断补 RBDY\n\n"
-                    "信号灯、group_no 顺序等仍需手动处理。",
+                    "· LINKID= 格式 2.2/2.3 不应记录与缺失边线\n\n"
+                    "路沿石冲突(2.1)、信号灯等仍需手动处理。",
                 )
                 return
 
             auto_count = sum(1 for item in actions if item.action != "skip")
             skip_count = len(actions) - auto_count
-            infer_links = collect_infer_road_ids(actions)
             reply = QMessageBox.question(
                 None,
                 "Excel边线改错",
                 f"已解析 {len(actions)} 条指令\n"
                 f"  可自动修复: {auto_count} 条\n"
-                f"  需手动处理: {skip_count} 条\n"
-                f"  BDY→RBDY 推断 link: {len(infer_links)} 组\n"
-                f"  同步 ROAD_LINK BDYID\n\n"
-                f"将多轮尝试修复（最多 3 轮），然后执行步骤 8、9 并保存。\n\n"
+                f"  需手动处理: {skip_count} 条\n\n"
+                f"按 Excel 指令修复（先删后移后补），然后执行步骤 8、9 并保存。\n\n"
                 f"是否继续？",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
@@ -138,7 +135,7 @@ class LaneFixController:
 
             progress.setLabelText("正在修复边线字段（可多轮）…")
             engine = LaneFixEngine(lane_layer, self._log)
-            stats = engine.apply_all(actions, infer_links)
+            stats = engine.apply_all(actions)
             lane_layer.triggerRepaint()
 
             progress.setLabelText("边线修复完成，正在执行步骤 8、9…")
@@ -152,8 +149,6 @@ class LaneFixController:
                 f"解析指令 {stats['total']} 条\n"
                 f"执行轮次 {stats['rounds']} 轮\n"
                 f"成功改字段 {stats['applied']} 次\n"
-                f"BDY推断更新 {stats['infer_updated']} 条\n"
-                f"ROAD_LINK同步 {stats['road_link_updated']} 条\n"
                 f"更新要素 {stats['features_updated']} 条\n"
                 f"未找到车道 {stats['not_found']} 条\n"
                 f"跳过 {stats['skipped']} 条\n"
