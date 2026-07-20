@@ -177,9 +177,9 @@ class ReconstructController:
                 None,
                 "重构失败",
                 f"{exc}\n\n请检查:\n"
-                "1. 是否从「原始数据目录」而非插件副本加载/选择数据\n"
-                "2. 是否已安装步骤6~9对应插件\n"
-                "3. reconstruct_algorithms.json 是否配置正确\n"
+                "1. 是否已安装 Z Attribute / Z Tools 且工具栏四按钮可见\n"
+                "2. 是否从「原始数据目录」而非插件副本加载/选择数据\n"
+                "3. 若工具栏找不到按钮，可配置 reconstruct_algorithms.json\n"
                 f"4. 日志: {log_path or '无'}",
             )
         finally:

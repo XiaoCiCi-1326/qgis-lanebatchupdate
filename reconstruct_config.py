@@ -46,7 +46,7 @@ STEP_TOOLBAR = {
 }
 
 # 兼容旧代码引用
-STEP_KEYWORDS = {key: groups[0] for key, info in STEP_TOOLBAR.items() for groups in [info["keyword_groups"]]}
+STEP_KEYWORDS = {key: info["keyword_groups"][0] for key, info in STEP_TOOLBAR.items()}
 
 # 若存在 reconstruct_algorithms.json，可在菜单找不到时回退 Processing
 ALGORITHM_CONFIG_FILE = "reconstruct_algorithms.json"
