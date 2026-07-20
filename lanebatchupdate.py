@@ -540,8 +540,14 @@ class LaneBatchUpdateTool:
                     return lane_ids
         return ctx.get("node_lane_order", {}).get(node_id, [])
 
-    def speed_from_node_lane_list(self, ctx, lane_id, node_id):
-        """FUN_004226c0：在 LANE_NODE.lanes 顺序中找第一条直行车道 speedlimit。"""
+    def speed_from_node_lane_list(self, ctx, lane_id, node_id, end="from"):
+        """
+        FUN_004226c0 规则 1.6：按 LANE_NODE.lanes 顺序在直行/转向索引查 speedlimit。
+
+        直行索引（local_80）：turn_type==0，读已刷好的 speed（含 ROAD_TYPE=1 的 30）。
+        驶出端仅 2 条 lane 时，可回退读转向索引（LAB_004230ac）。
+        驶入端仅 2 条且只有转向 lane 时失败（LAB_00422df3）。
+        """
         lane_ids = ctx.get("node_lane_order", {}).get(self.norm_id(node_id), [])
         if len(lane_ids) < 2:
             return None
@@ -552,25 +558,27 @@ class LaneBatchUpdateTool:
             other = lane_by_id.get(other_id)
             if other is None:
                 continue
-            if (
-                self.to_int(self.feat_val(other, "TYPE")) == 2
-                and self.to_int(self.feat_val(other, "ROAD_TYPE")) == 2
-                and self.to_int(self.feat_val(other, "TURN_TYPE")) == 0
-            ):
+            turn_type = self.to_int(self.feat_val(other, "TURN_TYPE"))
+            if turn_type == 0:
                 speed = self.to_int(self.feat_val(other, "SPEEDLIMIT"))
                 if not self.is_invalid_speed(speed):
                     return speed
-            if len(lane_ids) == 2 and self.to_int(self.feat_val(other, "TURN_TYPE")):
-                return None
+                continue
+            if len(lane_ids) == 2:
+                if end == "from":
+                    return None
+                speed = self.to_int(self.feat_val(other, "SPEEDLIMIT"))
+                if not self.is_invalid_speed(speed):
+                    return speed
         return None
 
     def cross_lane_speed(self, ctx, feat):
-        """FUN_004226c0 规则 1.6：from/to 节点 LANE_NODE.lanes 各取一直行限速，再取 min。"""
+        """FUN_004226c0 规则 1.6：from/to 节点各取关联限速，再取 min。"""
         lane_id = self.norm_id(self.feat_val(feat, "ID"))
         from_node = self.norm_id(self.feat_val(feat, "FROM_NODE"))
         to_node = self.norm_id(self.feat_val(feat, "TO_NODE"))
-        speed_from = self.speed_from_node_lane_list(ctx, lane_id, from_node)
-        speed_to = self.speed_from_node_lane_list(ctx, lane_id, to_node)
+        speed_from = self.speed_from_node_lane_list(ctx, lane_id, from_node, end="from")
+        speed_to = self.speed_from_node_lane_list(ctx, lane_id, to_node, end="to")
         if speed_from is None:
             self.log(
                 f"路口laneid={lane_id},未找到关联的驶入lane",
