@@ -1,12 +1,8 @@
 # 更新日志
 
-## v1.0.5.1
-- RBDY_L/R 为空：新增「从对向车道推断」规则（LEFT_RVS → BDY_LEFT → RBDY_L）
+## v1.0.4.6
+- 新增规则：BDYID_L/R 为空时，从**对向车道**推断 RBDY（LEFT_RVS → BDY_LEFT → RBDY_L）
 - 解析器支持「bdyid_l/r 是空的」格式；错误提示更明确
-
-## v1.0.5.0
-- Excel边线改错：支持「bdyid_l/r 是空的」→ 从同 link 的 BDY_LEFT/BDY_RIGHT 并集回填 RBDY（删错边线后补正确线段）
-- 发布版：含 v1.0.4.5 起 Excel 改错增强（48 条 errorlog 一次刷完、回退 infer/ROAD_LINK 全量同步）
 
 ## v1.0.4.5
 - 回退 BDY 全量推断与 ROAD_LINK 汇总同步（避免刷后出现大量新关联错误）

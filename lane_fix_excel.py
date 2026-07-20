@@ -12,11 +12,11 @@ from pathlib import Path
 from typing import Iterable, List, Optional
 
 
-    @dataclass
+@dataclass
 class LaneFixAction:
     """单条改错指令。"""
 
-    action: str  # add / remove / skip / move / swap / fill_from_lrvs / fill_from_bdy
+    action: str  # add / remove / skip / move / swap / fill_from_lrvs
     target_field: str
     match_field: str  # ID / ROAD_ID
     match_value: str
@@ -89,6 +89,8 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
         return []
 
     compact = re.sub(r"\s+", " ", raw)
+
+    # 1.2 LEFT_RVS groupID 顺序交换
     if "left_rvs" in compact.lower() and "顺序不对" in compact:
         lane_id = _extract_lane_id(compact)
         seg = re.search(r"group\s*id[【\[]?\s*([^】\]]+)", compact, re.IGNORECASE)
@@ -119,8 +121,6 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
     lane_id = _extract_lane_id(compact)
 
     # 2.3 bdyid_l/r 为空 → 从对向车道 LEFT_RVS 的 BDY_LEFT 推断 RBDY_L
-    # 规则：lane A.RBDY_L 为空 → 找 A.LEFT_RVS 对向 lane B → A.RBDY_L = B.BDY_LEFT
-    # 同理 lane A.RBDY_R 为空 → 找 A.RIGHT_RVS 对向 lane C → A.RBDY_R = C.BDY_RIGHT
     if link_id and re.search(r"bdyid_[lr]是空的", compact, re.IGNORECASE):
         if "bdyid_r" in compact.lower():
             field = "RBDY_R"
@@ -133,12 +133,9 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
             )
         ]
 
-    # 2.3 / 2.6 缺失边线（支持「缺失边线」「缺失了边线」）
+    # 2.3 / 2.6 缺失边线
     if link_id and re.search(r"缺失了?边线", compact):
-        if "缺失了边线" in compact:
-            seg = re.search(r"缺失了边线[：:\s]*(.+)", compact)
-        else:
-            seg = re.search(r"缺失边线[：:\s]*(.+)", compact)
+        seg = re.search(r"缺失了?边线[：:\s]*(.+)", compact)
         mark_ids = _digits_from_segment(seg.group(1) if seg else compact)
         if "bdyid_r" in compact.lower() or "右侧" in compact:
             field = "RBDY_R"
@@ -370,14 +367,7 @@ def load_table_rows(path: str) -> List[List[str]]:
     raise RuntimeError("请选择 .xlsx / .csv 格式的错误表格")
 
 
-_ACTION_ORDER = {
-    "remove": 0,
-    "move": 1,
-    "swap": 2,
-    "fill_from_bdy": 3,
-    "add": 4,
-    "skip": 9,
-}
+_ACTION_ORDER = {"remove": 0, "move": 1, "swap": 2, "add": 3, "skip": 9}
 
 
 def sort_fix_actions(actions: List[LaneFixAction]) -> List[LaneFixAction]:
