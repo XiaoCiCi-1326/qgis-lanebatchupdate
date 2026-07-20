@@ -1,5 +1,10 @@
 # 更新日志
 
+## v1.0.3.9
+- 插件管理器主图标重绘（道路 + 限速牌 + 转向）
+- metadata 主页/缺陷追踪/代码库链接指向 GitHub
+- 新增 `publish_github.py` 便于 push 与大版本 Release
+
 ## v1.0.3.8
 - 整理 GitHub 发布结构，仅包含插件运行文件
 

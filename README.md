@@ -50,6 +50,24 @@ python make_release.py
 
 输出位于上级目录 `release/` 文件夹。
 
+## 推送到 GitHub
+
+小改动（只 push 代码）：
+
+```bash
+python publish_github.py
+```
+
+大更新（打包 zip + 打 tag + push，再到 GitHub 上传 Release 附件）：
+
+```bash
+python publish_github.py --release -m "v1.0.3.9: 更新说明"
+```
+
+- **主页**：https://github.com/XiaoCiCi-1326/qgis-lanebatchupdate  
+- **Issues**：https://github.com/XiaoCiCi-1326/qgis-lanebatchupdate/issues  
+- **Releases**：https://github.com/XiaoCiCi-1326/qgis-lanebatchupdate/releases  
+
 ## 作者
 
 石天赐 — 2774480158@qq.com
