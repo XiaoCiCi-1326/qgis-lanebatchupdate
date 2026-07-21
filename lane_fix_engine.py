@@ -133,6 +133,8 @@ class LaneFixEngine:
 
     @staticmethod
     def _swap_ids(current, id_a: str, id_b: str) -> Tuple[str, bool]:
+        if LaneFixEngine.is_empty(current):
+            return "", False
         existing = LaneFixEngine.split_ids(current)
         if id_a not in existing or id_b not in existing:
             return LaneFixEngine._join_ids_static(existing), False
@@ -482,10 +484,10 @@ class LaneFixEngine:
                                 current_val, action.mark_ids[0], action.mark_ids[1]
                             )
                             if changed:
-                                feat[target_field] = new_val if new_val else None
+                                feat[target_field] = new_val
                                 self.log(
                                     f"swap OK: lane={action.match_value} {target_field} "
-                                    f"{current_val!r} → {new_val!r}",
+                                    f"{current_val!r} -> {new_val!r}",
                                     show_bar=False,
                                 )
                             else:
@@ -495,6 +497,7 @@ class LaneFixEngine:
                                     f"(norm后={LaneFixEngine.split_ids(current_val)})",
                                     show_bar=False,
                                 )
+                            continue
                         else:
                             changed = False
                     elif action.action == "move":
@@ -523,12 +526,6 @@ class LaneFixEngine:
                         self.log(
                             f"laneid={action.match_value} move {action.mark_ids} "
                             f"{action.target_field}->{action.target_field_to} OK",
-                            show_bar=False,
-                        )
-                    elif action.action == "swap":
-                        self.log(
-                            f"laneid={action.match_value} swap {action.mark_ids} "
-                            f"in {target_field} OK",
                             show_bar=False,
                         )
                     else:

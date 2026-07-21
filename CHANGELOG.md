@@ -1,8 +1,13 @@
 # 更新日志
 
+## v1.0.4.24
+- 修复 swap 执行：swap 分支添加 continue 防止 fall-through 到"无变化"判断
+- 修复 _swap_ids：空值保护防止数值类型字段崩溃
+- 删除 apply_actions 中 swap 死代码（日志重复）
+
 ## v1.0.4.23
 - 修复「顺序不对」swap 规则重复触发问题（LMARK_R/L 与 LEFT_RVS 规则互斥）
-- 修复 lmark_r/l swap 字段名错误：`lmark_r` → `BDY_RIGHT`，`lmark_l` → `BDY_LEFT`
+- 修复 lmark_r/l swap 字段名错误：lmark_r → BDY_RIGHT，lmark_l → BDY_LEFT
 - Excel 改错 swap 增加详细日志（跳过原因、交换结果）
 
 ## v1.0.4.12
@@ -16,7 +21,7 @@
 - 2.5/2.6 保持 LANE 层，由步骤 8 重新生成 ROAD_LINK 覆盖
 
 ## v1.0.4.10
-- 修复 _get_layer_by_name 使用了错误的类名（QatarInterface → QgsProject）
+- 修复 _get_layer_by_name 使用了错误的类名（QatarInterface → QatarProject）
 - 2.5/2.6 路口 lane BDYID 错误关联改回 LANE 层，由步骤 8 重新生成 ROAD_LINK 覆盖
 - SIGNAL LANES 修正逻辑保留在 SIGNAL 层（独立于步骤 8）
 
