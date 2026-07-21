@@ -251,31 +251,30 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
                 )
             ]
 
-    # 2.5 路口lane右侧 bdyid_l 错误关联 → 从 ROAD_LINK 删除
-    if "路口" in compact and "bdyid" in compact.lower() and "错误" in compact and "左右侧位错误" not in compact:
-        seg = re.search(r"错误\s*边线\s*id[：:\s]*([\d,，；\s]+)", compact, re.IGNORECASE)
+    # 2.5 路口内 ROAD_LINK BDYID_L/R 关联错误
+    if ("bdyid" in compact.lower() and "错误" in compact and "左右侧位错误" not in compact and ("路口内" in compact or "2.5" in raw)):
+        seg = re.search(r"错误[^\d]*?边线[\s\S]{0,20}?(?:ID)?[\uff1a:\s]*([\d,\uff0c\uff1b\s]+)", compact, re.IGNORECASE)
         mark_ids = _digits_from_segment(seg.group(1) if seg else compact)
-        if not mark_ids:
-            seg2 = re.search(r"错误.*?id\s*([\d,，；\s]+)", compact, re.IGNORECASE)
-            mark_ids = _digits_from_segment(seg2.group(1) if seg2 else compact)
         if link_id and mark_ids:
             side = "RBDY_R" if "bdyid_r" in compact.lower() or "右侧" in compact else "RBDY_L"
             return [
                 LaneFixAction(
                     "remove", side, "ROAD_ID", link_id, mark_ids, raw,
-                    note="路口lane bdyid 错误关联删除", layer="LANE",
+                    note="BDYID错误关联删除(ROAD)", layer="ROAD_LINK",
                 )
             ]
 
-    # 2.6 路口lane右侧 bdyid_r 缺失边线 → 添加到 ROAD_LINK
-    if "路口" in compact and "bdyid_r" in compact.lower() and re.search(r"缺失.*?边线", compact):
-        seg = re.search(r"缺失.*?边线[：:\s]*([\d,，；\s]+)", compact, re.IGNORECASE)
+    # 2.6 路口内 ROAD_LINK BDYID_L/R 缺失边线
+    if ("bdyid" in compact.lower() and re.search(r"缺失.*?边线", compact)
+            and ("路口内" in compact or "2.6" in raw)):
+        seg = re.search(r"缺失.*?边线[\uff1a:\s]*([\d,\uff0c\uff1b\s]+)", compact, re.IGNORECASE)
         mark_ids = _digits_from_segment(seg.group(1) if seg else compact)
         if link_id and mark_ids:
+            side = "RBDY_R" if "bdyid_r" in compact.lower() or "右侧" in compact else "RBDY_L"
             return [
                 LaneFixAction(
-                    "add", "RBDY_R", "ROAD_ID", link_id, mark_ids, raw,
-                    note="路口lane bdyid_r 缺失边线补上", layer="LANE",
+                    "add", side, "ROAD_ID", link_id, mark_ids, raw,
+                    note="BDYID缺失边线补上(ROAD)", layer="ROAD_LINK",
                 )
             ]
 

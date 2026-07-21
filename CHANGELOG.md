@@ -1,5 +1,10 @@
 # 更新日志
 
+## v1.0.4.12
+- 2.5/2.6改回ROAD_LINK层，不再经LANE+步骤8
+- 关闭全量补空RBDY，防止将错误ID带回ROAD_LINK
+- SIGNAL层添加ID字段别名(SIGNALID等)
+
 ## v1.0.4.11
 - 1.1 规则新增：支持 left_rvs 漏记录（如 lane【4208034】的left_rvs漏记录4208082）
 - 4.2 规则新增：支持 SIGNAL 删除不应挂接车道（remove），与应关联车道（set）共存

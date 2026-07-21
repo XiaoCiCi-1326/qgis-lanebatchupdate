@@ -1,75 +1,75 @@
-# -*- coding: utf-8 -*-
-"""Excel 边线改错：选表格 + 自动使用工程内 LANE 图层。"""
-
-from datetime import datetime
-import os
-import traceback
-
-from qgis.PyQt.QtCore import Qt
-from qgis.PyQt.QtGui import QIcon
-from qgis.PyQt.QtWidgets import QAction, QFileDialog, QMessageBox, QProgressDialog
-
-from qgis.core import QgsProject, QgsVectorLayer
-
-from .lane_fix_engine import GenericLayerFixer, LaneFixEngine
-from .lane_fix_excel import parse_fix_actions
-from .reconstruct_config import load_algorithm_ids
-from .reconstruct_feedback import ReconstructFeedback
-from .reconstruct_workflow import ReconstructWorkflow
-
-
-class LaneFixController:
-    """对齐 ProcessShpFiles：读取质检 Excel，自动修复 LANE 边线关联。"""
-
-    def __init__(self, iface, plugin_dir, log_fn):
-        self.iface = iface
-        self.plugin_dir = plugin_dir
-        self.log = log_fn
-        self.actions = []
-        self.log_lines = []
-
-    def initGui(self, actions_master):
-        icon_path = os.path.join(self.plugin_dir, "icon_lane_fix.png")
-        action = QAction(QIcon(icon_path), "Excel边线改错", self.iface.mainWindow())
-        action.triggered.connect(self.run)
-        self.iface.addVectorToolBarIcon(action)
-        self.iface.addPluginToVectorMenu("车道处理工具", action)
-        self.actions.append(action)
-        actions_master.append(action)
-
-    def unload(self):
-        for action in self.actions:
-            self.iface.removeVectorToolBarIcon(action)
-            self.iface.removePluginFromVectorMenu("车道处理工具", action)
-        self.actions = []
-
-    def _log(self, text, level="INFO", show_bar=True):
-        line = f"{datetime.now():%H:%M:%S} [{level}] {text}"
-        self.log_lines.append(line)
-        self.log(text, level=level, show_bar=show_bar)
-
-    def _save_log(self):
-        if not self.log_lines:
-            return None
-        log_dir = os.path.join(self.plugin_dir, "log")
-        os.makedirs(log_dir, exist_ok=True)
-        path = os.path.join(log_dir, f"log_lane_fix_{datetime.now():%Y-%m-%d}.txt")
-        with open(path, "a", encoding="utf-8") as handle:
-            handle.write("\n".join(self.log_lines) + "\n")
-        return path
-
-    @staticmethod
-    def _get_layer_by_name(name):
-        project = QgsProject.instance()
-        layers = project.mapLayersByName(name)
-        if layers:
-            return layers[0]
-        for layer in project.mapLayers().values():
-            src = os.path.basename(layer.source().split("|", 1)[0])
-            if src.lower() == f"{name.lower()}.shp":
-                return layer
-        return None
-
+# -*- coding: utf-8 -*-
+"""Excel 边线改错：选表格 + 自动使用工程内 LANE 图层。"""
+
+from datetime import datetime
+import os
+import traceback
+
+from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtGui import QIcon
+from qgis.PyQt.QtWidgets import QAction, QFileDialog, QMessageBox, QProgressDialog
+
+from qgis.core import QgsProject, QgsVectorLayer
+
+from .lane_fix_engine import GenericLayerFixer, LaneFixEngine
+from .lane_fix_excel import parse_fix_actions
+from .reconstruct_config import load_algorithm_ids
+from .reconstruct_feedback import ReconstructFeedback
+from .reconstruct_workflow import ReconstructWorkflow
+
+
+class LaneFixController:
+    """对齐 ProcessShpFiles：读取质检 Excel，自动修复 LANE 边线关联。"""
+
+    def __init__(self, iface, plugin_dir, log_fn):
+        self.iface = iface
+        self.plugin_dir = plugin_dir
+        self.log = log_fn
+        self.actions = []
+        self.log_lines = []
+
+    def initGui(self, actions_master):
+        icon_path = os.path.join(self.plugin_dir, "icon_lane_fix.png")
+        action = QAction(QIcon(icon_path), "Excel边线改错", self.iface.mainWindow())
+        action.triggered.connect(self.run)
+        self.iface.addVectorToolBarIcon(action)
+        self.iface.addPluginToVectorMenu("车道处理工具", action)
+        self.actions.append(action)
+        actions_master.append(action)
+
+    def unload(self):
+        for action in self.actions:
+            self.iface.removeVectorToolBarIcon(action)
+            self.iface.removePluginFromVectorMenu("车道处理工具", action)
+        self.actions = []
+
+    def _log(self, text, level="INFO", show_bar=True):
+        line = f"{datetime.now():%H:%M:%S} [{level}] {text}"
+        self.log_lines.append(line)
+        self.log(text, level=level, show_bar=show_bar)
+
+    def _save_log(self):
+        if not self.log_lines:
+            return None
+        log_dir = os.path.join(self.plugin_dir, "log")
+        os.makedirs(log_dir, exist_ok=True)
+        path = os.path.join(log_dir, f"log_lane_fix_{datetime.now():%Y-%m-%d}.txt")
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write("\n".join(self.log_lines) + "\n")
+        return path
+
+    @staticmethod
+    def _get_layer_by_name(name):
+        project = QgsProject.instance()
+        layers = project.mapLayersByName(name)
+        if layers:
+            return layers[0]
+        for layer in project.mapLayers().values():
+            src = os.path.basename(layer.source().split("|", 1)[0])
+            if src.lower() == f"{name.lower()}.shp":
+                return layer
+        return None
+
     def run(self):
 
         self.log_lines = []
@@ -304,8 +304,8 @@ class LaneFixController:
 
             self._log("===== 全量扫描补空 RBDY =====")
 
+            # 全量装空RBDY已禁用\uff0c改由2.5/2.6直接改ROAD_LINK
             engine2 = LaneFixEngine(lane_layer, self._log)
-
             scan_result = engine2.scan_and_fill_all_empty_rbdy()
 
             lane_layer.triggerRepaint()

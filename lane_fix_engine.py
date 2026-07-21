@@ -24,6 +24,7 @@ _FIELD_ALIASES = {
 
 # SIGNAL 层字段别名
 _SIGNAL_FIELD_ALIASES = {
+    "ID": ("ID", "SIGNALID", "signal_id", "SIGNAL_ID", "signalid"),
     "LANES": ("LANES", "lanes", "Lanes", "LANE"),
 }
 
@@ -365,12 +366,12 @@ class LaneFixEngine:
             method = "left" if rev_name == "LEFT_RVS" else "right"
             return True, method
 
-        # 策略 3/6：本车道 BDY 兜底
-        if own_bdy_f:
-            bdy_val = feat[own_bdy_f]
-            if not self.is_empty(bdy_val):
-                feat[rbdy_f] = bdy_val
-                return True, "fallback"
+        # [已禁用] 本车道BDY兜底_fallback：会把错误的本车道发回步骤8
+        # if own_bdy_f:
+        #     bdy_val = feat[own_bdy_f]
+        #     if not self.is_empty(bdy_val):
+        #         feat[rbdy_f] = bdy_val
+        #         return True, "fallback"
 
         return False, ""
 
