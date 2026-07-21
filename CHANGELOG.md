@@ -1,5 +1,10 @@
 # 更新日志
 
+## v1.0.4.11
+- 1.1 规则新增：支持 left_rvs 漏记录（如 lane【4208034】的left_rvs漏记录4208082）
+- 4.2 规则新增：支持 SIGNAL 删除不应挂接车道（remove），与应关联车道（set）共存
+- 2.5/2.6 保持 LANE 层，由步骤 8 重新生成 ROAD_LINK 覆盖
+
 ## v1.0.4.10
 - 修复 _get_layer_by_name 使用了错误的类名（QatarInterface → QgsProject）
 - 2.5/2.6 路口 lane BDYID 错误关联改回 LANE 层，由步骤 8 重新生成 ROAD_LINK 覆盖
