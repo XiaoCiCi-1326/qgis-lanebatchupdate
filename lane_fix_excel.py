@@ -61,8 +61,7 @@ def _extract_lane_id(compact: str) -> Optional[str]:
     """从 lane id / lane【123】 等格式提取 lane ID。"""
     for pat in (
         r"lane\s*id\s*[=:：]?\s*(\d{6,})",
-        r"lane[【\[]\s*(\d{6,})\s*[】\]]",
-        r"lane[是为：:\s]+(\d{6,})",
+        r"lane[【\[]\s*(\d{6,})\s*[】\]]",   # lane【4208034】
     ):
         m = re.search(pat, compact, re.IGNORECASE)
         if m:
@@ -119,7 +118,11 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
         ]
 
     # 1.1 LEFT_RVS 漏记录（单向缺失，如"漏记录4208082"）
+    # 格式：lane【4208034】的left_rvs漏记录4208082
     single_missing = re.search(r"left_rvs[漏缺]+记录[：:\s]*(\d{6,})", compact, re.IGNORECASE)
+    if not single_missing:
+        # 支持 lane【ID】的left_rvs漏记录ID 格式（lane和漏记录之间有"的"）
+        single_missing = re.search(r"lane[的].*?left_rvs.*?漏记录[：:\s]*(\d{6,})", compact, re.IGNORECASE)
     if not single_missing:
         single_missing = re.search(r"left_rvs.*?漏记录[：:\s]*(\d{6,})", compact, re.IGNORECASE)
     if not single_missing:
@@ -254,15 +257,26 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
     # 2.5 路口内 ROAD_LINK BDYID_L/R 关联错误
     # 错误格式：linkid:4208007，左侧bdyid_l，关联的边线ID4208491错误
     # "错误"出现在边线ID数字之后，所以先找ID数字，再向前找"错误"
-    if ("bdyid" in compact.lower() and "错误" in compact and "左右侧位错误" not in compact
+    if ("bdyid" in compact.lower() and "错误" in compact
             and ("路口内" in compact or "2.5" in raw)):
         # 先找边线ID数字，再向前匹配"错误"
-        seg = re.search(r"(?:ID)?[：:\s]*([\d,，；]+)\s*错误", compact, re.IGNORECASE)
+        seg = re.search(r"(?:ID)?[：:\s]*([\d,，；]*)\s*错误", compact, re.IGNORECASE)
         if not seg:
-            # 备选：数字直接跟"错误"无空格
             seg = re.search(r"([\d,，；]+)错误", compact)
         mark_ids = _digits_from_segment(seg.group(1) if seg else compact)
         if link_id and mark_ids:
+            # "左右侧位错误" → 从左右两侧都 remove
+            if "左右侧位错误" in compact:
+                return [
+                    LaneFixAction(
+                        "remove", "RBDY_L", "ROAD_ID", link_id, mark_ids, raw,
+                        note="BDYID左右侧位错误-删左侧(ROAD)", layer="ROAD_LINK",
+                    ),
+                    LaneFixAction(
+                        "remove", "RBDY_R", "ROAD_ID", link_id, mark_ids, raw,
+                        note="BDYID左右侧位错误-删右侧(ROAD)", layer="ROAD_LINK",
+                    ),
+                ]
             side = "RBDY_R" if "bdyid_r" in compact.lower() or "右侧" in compact else "RBDY_L"
             return [
                 LaneFixAction(
