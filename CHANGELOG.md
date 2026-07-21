@@ -1,5 +1,10 @@
 # 更新日志
 
+## v1.0.4.23
+- 修复「顺序不对」swap 规则重复触发问题（LMARK_R/L 与 LEFT_RVS 规则互斥）
+- 修复 lmark_r/l swap 字段名错误：`lmark_r` → `BDY_RIGHT`，`lmark_l` → `BDY_LEFT`
+- Excel 改错 swap 增加详细日志（跳过原因、交换结果）
+
 ## v1.0.4.12
 - 2.5/2.6改回ROAD_LINK层，不再经LANE+步骤8
 - 关闭全量补空RBDY，防止将错误ID带回ROAD_LINK

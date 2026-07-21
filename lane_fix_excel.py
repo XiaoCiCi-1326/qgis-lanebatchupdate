@@ -90,8 +90,28 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
 
     compact = re.sub(r"\s+", " ", raw)
 
+    # 1.3 LMARK_R/L 顺序不对（边线4211704与4211705顺序错误）
+    # lmark_r -> BDY_RIGHT, lmark_l -> BDY_LEFT
+    if re.search(r"lmark_[lr].*顺序不对", compact, re.IGNORECASE):
+        lane_id = _extract_lane_id(compact)
+        seg = re.search(r"边线[（(](\d[\d,，、\s]+?)与(\d[\d,，、\s]+?)顺序错误[）)]", compact)
+        if not seg:
+            seg = re.search(r"(\d{6,})与(\d{6,})顺序错误", compact)
+        if seg:
+            a = _digits_from_segment(seg.group(1))
+            b = _digits_from_segment(seg.group(2))
+            mark_ids = (a + b) if a and b else (a or b or [])
+            if lane_id and mark_ids:
+                field = "BDY_RIGHT" if "lmark_r" in compact.lower() else "BDY_LEFT"
+                return [
+                    LaneFixAction(
+                        "swap", field, "ID", lane_id, mark_ids[:2], raw,
+                        note=f"{field} 交换顺序",
+                    )
+                ]
+
     # 1.2 LEFT_RVS groupID 顺序交换
-    if "left_rvs" in compact.lower() and "顺序不对" in compact:
+    elif "left_rvs" in compact.lower() and "顺序不对" in compact:
         lane_id = _extract_lane_id(compact)
         seg = re.search(r"group\s*id[【\[]?\s*([^】\]]+)", compact, re.IGNORECASE)
         mark_ids = _digits_from_segment(seg.group(1) if seg else compact)
@@ -102,26 +122,6 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
                     note="left_rvs 交换顺序",
                 )
             ]
-
-    # 1.3 LMARK_R/L 记录顺序不对（边线4211704与4211705顺序错误）
-    if re.search(r"lmark_[lr]记录顺序不对", compact):
-        lane_id = _extract_lane_id(compact)
-        seg = re.search(r"边线[（(](\d[\d,，、\s]+?)与(\d[\d,，、\s]+?)顺序错误[）)]", compact)
-        if not seg:
-            seg = re.search(r"(\d{6,})与(\d{6,})顺序错误", compact)
-        if seg:
-            a = _digits_from_segment(seg.group(1))
-            b = _digits_from_segment(seg.group(2))
-            mark_ids = (a + b) if a and b else (a or b or [])
-            if lane_id and mark_ids:
-                field = "LMARK_R" if "lmark_r" in compact.lower() else "LMARK_L"
-                return [
-                    LaneFixAction(
-                        "swap", field, "ID", lane_id, mark_ids[:2], raw,
-                        note=f"{field} 交换顺序",
-                    )
-                ]
-
     # 1.1 LEFT_RVS 互挂缺失
     mutual = re.search(
         r"(\d{6,})与(\d{6,})互为对方left_rvs.*?均未被对方记录",

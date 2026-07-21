@@ -95,7 +95,17 @@ class LaneFixEngine:
                     self.lane_by_road.setdefault(road_id, []).append(feat.id())
 
     def _resolve_actual_field(self, logical: str) -> Optional[str]:
-        return self.field_map.get(logical)
+        # 先按逻辑名查
+        result = self.field_map.get(logical)
+        if result:
+            return result
+        # 再反向查别名表：target_field 本身可能是别名（如 LMARK_R）
+        upper = {field.name().upper(): field.name() for field in self.lane_layer.fields()}
+        for name_upper, actual in upper.items():
+            for logical_key, aliases in _FIELD_ALIASES.items():
+                if name_upper in (a.upper() for a in aliases):
+                    return actual
+        return None
 
     def _find_feature_ids(self, action: LaneFixAction) -> List[int]:
         if action.match_field == "ID":
@@ -467,11 +477,24 @@ class LaneFixEngine:
                             feat[target_field] = new_val if new_val else None
                     elif action.action == "swap":
                         if len(action.mark_ids) >= 2:
+                            current_val = feat[target_field]
                             new_val, changed = self._swap_ids(
-                                feat[target_field], action.mark_ids[0], action.mark_ids[1]
+                                current_val, action.mark_ids[0], action.mark_ids[1]
                             )
                             if changed:
                                 feat[target_field] = new_val if new_val else None
+                                self.log(
+                                    f"swap OK: lane={action.match_value} {target_field} "
+                                    f"{current_val!r} → {new_val!r}",
+                                    show_bar=False,
+                                )
+                            else:
+                                self.log(
+                                    f"swap 跳过: lane={action.match_value} {target_field} "
+                                    f"当前值={current_val!r} 需交换={action.mark_ids} "
+                                    f"(norm后={LaneFixEngine.split_ids(current_val)})",
+                                    show_bar=False,
+                                )
                         else:
                             changed = False
                     elif action.action == "move":
