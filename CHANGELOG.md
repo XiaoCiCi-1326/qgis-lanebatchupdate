@@ -1,5 +1,10 @@
 # 更新日志
 
+## v1.0.4.10
+- 修复 _get_layer_by_name 使用了错误的类名（QatarInterface → QgsProject）
+- 2.5/2.6 路口 lane BDYID 错误关联改回 LANE 层，由步骤 8 重新生成 ROAD_LINK 覆盖
+- SIGNAL LANES 修正逻辑保留在 SIGNAL 层（独立于步骤 8）
+
 ## v1.0.4.9
 - Excel边线改错：新增 ROAD_LINK 层 BDYID_L/R 错误关联删除（2.5）和缺失边线补充（2.6）
 - Excel边线改错：新增 SIGNAL 层 LANES 字段关联修正（4.2 虚拟路口）

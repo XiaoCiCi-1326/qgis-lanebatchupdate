@@ -187,14 +187,14 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
                 return [
                     LaneFixAction(
                         "remove", "RBDY_R", "ROAD_ID", link_id, mark_ids, raw,
-                        note="删除错误关联", layer="ROAD_LINK",
+                        note="删除错误关联", layer="LANE",
                     )
                 ]
             if "bdyid_l" in compact.lower() or "左侧" in compact:
                 return [
                     LaneFixAction(
                         "remove", "RBDY_L", "ROAD_ID", link_id, mark_ids, raw,
-                        note="删除错误关联", layer="ROAD_LINK",
+                        note="删除错误关联", layer="LANE",
                     )
                 ]
 
@@ -248,7 +248,7 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
             return [
                 LaneFixAction(
                     "remove", side, "ROAD_ID", link_id, mark_ids, raw,
-                    note="路口lane bdyid 错误关联删除", layer="ROAD_LINK",
+                    note="路口lane bdyid 错误关联删除", layer="LANE",
                 )
             ]
 
@@ -260,7 +260,7 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
             return [
                 LaneFixAction(
                     "add", "RBDY_R", "ROAD_ID", link_id, mark_ids, raw,
-                    note="路口lane bdyid_r 缺失边线补上", layer="ROAD_LINK",
+                    note="路口lane bdyid_r 缺失边线补上", layer="LANE",
                 )
             ]
 

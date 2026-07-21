@@ -59,9 +59,8 @@ class LaneFixController:
         return path
 
     @staticmethod
-    @staticmethod
     def _get_layer_by_name(name):
-        project = QatarInterface.instance()
+        project = QgsProject.instance()
         layers = project.mapLayersByName(name)
         if layers:
             return layers[0]
