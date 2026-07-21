@@ -22,6 +22,11 @@ _FIELD_ALIASES = {
     "LEFT_RVS": ("LEFT_RVS", "LEFT_RVS", "left_rvs"),
 }
 
+# SIGNAL 层字段别名
+_SIGNAL_FIELD_ALIASES = {
+    "LANES": ("LANES", "lanes", "Lanes", "LANE"),
+}
+
 
 class LaneFixEngine:
     """对齐 ProcessShpFiles：按 Excel 错误表批量改 LANE 边线字段。"""
@@ -604,4 +609,183 @@ class LaneFixEngine:
                 break
             self.log(f"第 {round_no} 轮改错完成，继续检查…", show_bar=False)
         return total
+
+
+class GenericLayerFixer:
+    """
+    通用矢量图层字段修复工具。
+    支持 ROAD_LINK（BDYID_L/R）、SIGNAL（LANES）等图层。
+    """
+
+    def __init__(self, layer, log_fn: Callable):
+        self.layer = layer
+        self.log = log_fn
+        self.field_map: Dict[str, str] = {}
+        if layer:
+            self._build_field_map()
+
+    def _build_field_map(self):
+        upper = {f.name().upper(): f.name() for f in self.layer.fields()}
+        resolved = {}
+        for aliases in (_FIELD_ALIASES, _SIGNAL_FIELD_ALIASES):
+            for logical, alias_list in aliases.items():
+                if logical in resolved:
+                    continue
+                for alias in alias_list:
+                    actual = upper.get(alias.upper())
+                    if actual:
+                        resolved[logical] = actual
+                        break
+        self.field_map = resolved
+
+    def _resolve(self, logical_field: str) -> str:
+        return self.field_map.get(logical_field, logical_field)
+
+    def apply_actions(self, actions: List[LaneFixAction]) -> Dict[str, int]:
+        stats = {"total": len(actions), "applied": 0, "skipped": 0, "not_found": 0}
+        if not self.layer:
+            stats["not_found"] = len(actions)
+            self.log("GenericLayerFixer: 图层未加载", level="WARN")
+            return stats
+
+        was_editing = self.layer.isEditable()
+        if not was_editing and not self.layer.startEditing():
+            self.log("GenericLayerFixer: 无法进入编辑模式", level="WARN")
+            return stats
+
+        touched = set()
+        try:
+            for action in actions:
+                if action.action == "skip":
+                    stats["skipped"] += 1
+                    continue
+
+                if not action.match_value:
+                    stats["skipped"] += 1
+                    continue
+
+                fid = self._find_feature_id(action)
+                if fid is None:
+                    stats["not_found"] += 1
+                    self.log(
+                        f"未找到要素 {action.target_field}={action.match_value}: "
+                        f"{action.source_text[:80]}", show_bar=False,
+                    )
+                    continue
+
+                feat = self.layer.getFeature(fid)
+                if not feat.isValid():
+                    stats["not_found"] += 1
+                    continue
+
+                target_field = self._resolve(action.target_field)
+                changed = False
+
+                if action.action == "set":
+                    feat[target_field] = action.mark_ids[0] if action.mark_ids else None
+                    changed = True
+                elif action.action == "remove":
+                    new_val, changed = self._remove_ids(feat[target_field], action.mark_ids)
+                    if changed:
+                        feat[target_field] = new_val if new_val else None
+                elif action.action == "add":
+                    new_val, changed = self._add_ids(feat[target_field], action.mark_ids)
+                    if changed:
+                        feat[target_field] = new_val if new_val else None
+                elif action.action == "move":
+                    new_val, changed = self._remove_ids(feat[target_field], action.mark_ids)
+                    if changed and action.target_field_to:
+                        to_field = self._resolve(action.target_field_to)
+                        to_existing = feat[to_field] or ""
+                        merged, _ = self._add_ids(to_existing, action.mark_ids)
+                        feat[to_field] = merged
+                    if changed:
+                        feat[target_field] = new_val if new_val else None
+
+                if changed:
+                    self.layer.updateFeature(feat)
+                    touched.add(fid)
+                    stats["applied"] += 1
+                    self.log(
+                        f"GenericLayerFixer {action.action} "
+                        f"{target_field}={action.match_value} {action.mark_ids}: OK",
+                        show_bar=False,
+                    )
+                else:
+                    stats["skipped"] += 1
+
+            if not was_editing:
+                if not self.layer.commitChanges():
+                    errors = "; ".join(self.layer.commitErrors())
+                    self.layer.rollBack()
+                    self.log(f"GenericLayerFixer 保存失败: {errors}", level="ERROR")
+                    return stats
+        except Exception:
+            if not was_editing:
+                self.layer.rollBack()
+            raise
+
+        stats["features_updated"] = len(touched)
+        return stats
+
+    def _find_feature_id(self, action: LaneFixAction) -> Optional[int]:
+        for fname in (action.match_field, "ID", "LINKID", "LINK_ID", "ROAD_ID"):
+            actual = self._resolve(fname)
+            if actual not in self.layer.fields().names():
+                continue
+            for feat in self.layer.getFeatures():
+                val_str = self.norm_id(feat[actual])
+                if val_str == action.match_value:
+                    return feat.id()
+        return None
+
+    @staticmethod
+    def is_empty(value) -> bool:
+        if value is None:
+            return True
+        text = str(value).strip()
+        return text in ("", "None", "NULL")
+
+    @staticmethod
+    def norm_id(value) -> str:
+        if GenericLayerFixer.is_empty(value):
+            return ""
+        text = str(value).strip()
+        try:
+            num = float(text)
+            if num == int(num):
+                return str(int(num))
+        except (TypeError, ValueError):
+            pass
+        return text
+
+    @staticmethod
+    def split_ids(raw) -> List[str]:
+        if GenericLayerFixer.is_empty(raw):
+            return []
+        return [
+            GenericLayerFixer.norm_id(p)
+            for p in re.split(r"[|,;；]", str(raw))
+            if GenericLayerFixer.norm_id(p)
+        ]
+
+    @staticmethod
+    def _add_ids(existing, new_ids: List[str], prepend=False) -> Tuple[str, bool]:
+        if not new_ids:
+            return str(existing) if existing else "", False
+        existing_list = GenericLayerFixer.split_ids(existing)
+        added = [nid for nid in new_ids if nid not in existing_list]
+        if not added:
+            return str(existing) if existing else "", False
+        merged = (added + existing_list) if prepend else (existing_list + added)
+        return ";".join(merged), True
+
+    @staticmethod
+    def _remove_ids(existing, to_remove: List[str]) -> Tuple[str, bool]:
+        existing_list = GenericLayerFixer.split_ids(existing)
+        remove_set = set(to_remove)
+        new_list = [x for x in existing_list if x not in remove_set]
+        if new_list == existing_list:
+            return str(existing) if existing else "", False
+        return ";".join(new_list), True
 

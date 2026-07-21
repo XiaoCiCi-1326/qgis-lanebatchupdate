@@ -1,5 +1,11 @@
 # 更新日志
 
+## v1.0.4.9
+- Excel边线改错：新增 ROAD_LINK 层 BDYID_L/R 错误关联删除（2.5）和缺失边线补充（2.6）
+- Excel边线改错：新增 SIGNAL 层 LANES 字段关联修正（4.2 虚拟路口）
+- Excel边线改错：自动识别工程内 ROAD_LINK、SIGNAL 图层，按图层分发改错指令
+- Excel边线改错：全量补 RBDY 时正确复用已存在的编辑状态（不再重复 startEditing）
+
 ## v1.0.4.8
 - Excel边线改错：修复 RBDY 填充时 startEditing 重复调用失败（已在编辑模式则不再调用）
 - Excel边线改错：自动检测图层是否已进入编辑模式，避免 commit 时报错
