@@ -20,6 +20,7 @@ class ReconstructController:
     MODE_PREP = "reconstruct_prep"
     MODE_FULL = "reconstruct_full"
     MODE_OPEN_ORIG = "reconstruct_open_orig"
+    MODE_FILL_RBDY = "fill_rbdy"
 
     def __init__(self, iface, plugin_dir, log_fn):
         self.iface = iface
@@ -32,6 +33,7 @@ class ReconstructController:
         buttons = (
             (self.MODE_PREP, "准备三份数据", "icon_reconstruct_prep.png", "run"),
             (self.MODE_FULL, "一键重构(全程)", "icon_reconstruct_full.png", "run"),
+            (self.MODE_FILL_RBDY, "全量补空RBDY", "icon_fill_rbdy.png", "fill_rbdy"),
             (self.MODE_OPEN_ORIG, "打开原始文件", "icon_reconstruct_open.png", "open"),
         )
         for mode, label, icon_name, action_type in buttons:
@@ -39,6 +41,8 @@ class ReconstructController:
             action = QAction(QIcon(icon_path), label, self.iface.mainWindow())
             if action_type == "open":
                 action.triggered.connect(self.open_original_folder)
+            elif action_type == "fill_rbdy":
+                action.triggered.connect(self.fill_empty_rbdy)
             else:
                 action.triggered.connect(lambda checked=False, m=mode: self.run(m))
             self.iface.addVectorToolBarIcon(action)
@@ -66,6 +70,44 @@ class ReconstructController:
         with open(path, "a", encoding="utf-8") as handle:
             handle.write("\n".join(self.log_lines) + "\n")
         return path
+
+    def fill_empty_rbdy(self):
+        """全量扫描 LANE 补空 RBDY：独立按钮，在一键重构之后使用。"""
+        from .lane_fix_engine import LaneFixEngine
+        from qgis.core import(QgsProject, QGIS_VERSION)
+        import re
+
+        self._log("===== 全量补空RBDY =====")
+
+        # 找 LANE 图层
+        lane_layer = None
+        for name, layer in list(QgsProject.instance().mapLayers().items()):
+            if re.search(r"(?:^|_)lane(?:s)?(?:_|$|layer)", name, re.I) and layer.geometryType() in (1, 2):
+                if lane_layer is None or (layer.type() == 0 and layer.storageType() == "ESRI Shapefile"):
+                    lane_layer = layer
+                    break
+
+        if lane_layer is None:
+            self._log("未找到 LANE 图层", level="WARN")
+            QMessageBox.warning(self.iface.mainWindow(), "未找到图层", "请先加载 LANE/边线图层")
+            return
+
+        if not lane_layer.isEditable() and not lane_layer.startEditing():
+            self._log("无法开启图层编辑", level="WARN")
+            return
+
+        engine = LaneFixEngine(lane_layer, self._log)
+        result = engine.scan_and_fill_all_empty_rbdy()
+
+        total = result["left"] + result["right"] + result["fallback"]
+        self._log(f"全量补空RBDY完成: left={result['left']} right={result['right']} fallback={result['fallback']} 总计={total}")
+        self._log("注意：此步骤建议在修复 Excel 错误之后执行，避免填入错误关联", level="WARN")
+        self._save_log("fill_rbdy")
+
+        QMessageBox.information(
+            self.iface.mainWindow(), "全量补空RBDY",
+            f"补空完成\n左侧={result['left']} 右侧={result['right']} fallback={result['fallback']}\n总计={total} 条"
+        )
 
     def _pick_source_dir(self, workflow):
         """未自动识别源目录时，弹出文件夹选择。"""
