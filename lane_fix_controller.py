@@ -321,7 +321,7 @@ class LaneFixController:
 
 
 
-            total_rbdy = sum(scan_result.values())
+            total_rbdy = scan_pre["left"] + scan_pre["right"] + scan_pre["fallback"]
 
             lines = ["解析指令 {} 条".format(len(all_actions))]
 
@@ -337,7 +337,7 @@ class LaneFixController:
 
             lines.append("全量补空RBDY {} 条 (left={} right={} fallback={})".format(
 
-                total_rbdy, scan_result["left"], scan_result["right"], scan_result["fallback"]))
+                total_rbdy, scan_pre["left"], scan_pre["right"], scan_pre["fallback"]))
 
             lines.append("步骤 8、9 后保存图层 {} 个".format(saved))
 

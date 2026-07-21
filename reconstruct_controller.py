@@ -79,18 +79,30 @@ class ReconstructController:
 
         self._log("===== 全量补空RBDY =====")
 
+        from qgis.core import(QgsProject)
+        import re
+
         # 找 LANE 图层
         lane_layer = None
         for name, layer in list(QgsProject.instance().mapLayers().items()):
             if re.search(r"(?:^|_)lane(?:s)?(?:_|$|layer)", name, re.I) and layer.geometryType() in (1, 2):
+                # 优先选 Shapefile（原始数据层）
                 if lane_layer is None or (layer.type() == 0 and layer.storageType() == "ESRI Shapefile"):
                     lane_layer = layer
-                    break
+                    if layer.type() == 0:
+                        self._log(f"选中 LANE 图层: {name} (Shapefile)", level="DEBUG")
+                    if not re.search(r"(?:^|_)lane(?:s)?(?:_|$|layer)", name, re.I):
+                        lane_layer = layer
+                        break
 
         if lane_layer is None:
             self._log("未找到 LANE 图层", level="WARN")
             QMessageBox.warning(self.iface.mainWindow(), "未找到图层", "请先加载 LANE/边线图层")
             return
+
+        # 打印可用字段用于诊断
+        field_names = [f.name() for f in lane_layer.fields()]
+        self._log(f"LANE 字段: {field_names}", level="DEBUG")
 
         if not lane_layer.isEditable() and not lane_layer.startEditing():
             self._log("无法开启图层编辑", level="WARN")
@@ -101,7 +113,12 @@ class ReconstructController:
 
         total = result["left"] + result["right"] + result["fallback"]
         self._log(f"全量补空RBDY完成: left={result['left']} right={result['right']} fallback={result['fallback']} 总计={total}")
-        self._log("注意：此步骤建议在修复 Excel 错误之后执行，避免填入错误关联", level="WARN")
+
+        # 打印 RBDY_L/R 字段是否被识别
+        rbdy_l = engine.field_map.get("RBDY_L")
+        rbdy_r = engine.field_map.get("RBDY_R")
+        if not rbdy_l or not rbdy_r:
+            self._log(f"字段未映射！RBDY_L={rbdy_l} RBDY_R={rbdy_r}", level="WARN")
         self._save_log("fill_rbdy")
 
         QMessageBox.information(
