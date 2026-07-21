@@ -272,26 +272,28 @@ class LaneFixEngine:
             return 0
         return updated
 
-    def scan_and_fill_all_empty_rbdy(self) -> Dict[str, int]:
+    def scan_and_fill_all_empty_rbdy(self, skip_ids: set = None) -> Dict[str, int]:
         """
         全量扫描所有 lane，对 RBDY_L/R 为空的字段按三级策略补全。
-        策略（与 _fill_empty_rbdy_from_lrvs 一致）：
-          RBDY_L → 1) LEFT_RVS 对向 BDY_LEFT  2) RIGHT_RVS 对向 BDY_RIGHT  3) 本车道 BDY_LEFT
-          RBDY_R → 1) RIGHT_RVS 对向 BDY_RIGHT  2) LEFT_RVS 对向 BDY_LEFT  3) 本车道 BDY_RIGHT
-        返回填充统计（按 left/right/fallback 分开计数）。
+        skip_ids: 被 2.5 错误关联标记的 lane ID，跳过不填充。
         """
         rbdy_l_field = self._resolve_actual_field("RBDY_L")
         rbdy_r_field = self._resolve_actual_field("RBDY_R")
         if not (rbdy_l_field and rbdy_r_field):
             return {"left": 0, "right": 0, "fallback": 0}
 
+        skip_ids = skip_ids or set()
         result = {"left": 0, "right": 0, "fallback": 0}
         was_editing = self.lane_layer.isEditable()
         if not was_editing and not self.lane_layer.startEditing():
             return result
 
+        id_field = self.field_map.get("ID", "ID")
         try:
             for feat in self.lane_layer.getFeatures():
+                lid = self.norm_id(feat[id_field])
+                if lid in skip_ids:
+                    continue
                 # RBDY_L
                 if self.is_empty(feat[rbdy_l_field]):
                     filled, method = self._try_fill_rbdy(feat, "RBDY_L")

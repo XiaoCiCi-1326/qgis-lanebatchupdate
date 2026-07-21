@@ -234,10 +234,45 @@ class LaneFixController:
 
 
 
+            # 收集所有会被删 RBDY 的 lane_id（来自 remove actions），预填充时跳过
+            self._log("===== 分析 Excel 指令中的 remove RBDY 指令 =====")
+            skip_ids: set = set()
+            road_field_name = None
+            id_field_name = None
+            if lane_layer:
+                upper_fields = {f.name().upper(): f.name() for f in lane_layer.fields()}
+                road_field_name = upper_fields.get("ROAD_ID") or upper_fields.get("LINKID") or upper_fields.get("LINK_ID")
+                id_field_name = upper_fields.get("ID")
+            if road_field_name and id_field_name:
+                for action in lane_actions:
+                    if action.action == "remove":
+                        for feat in lane_layer.getFeatures():
+                            fv = feat[road_field_name]
+                            vid = str(fv).strip() if fv is not None else ""
+                            try:
+                                if float(vid) == int(float(vid)):
+                                    vid = str(int(float(vid)))
+                            except (ValueError, TypeError):
+                                pass
+                            if vid == action.match_value:
+                                lid = feat[id_field_name]
+                                ls = str(lid).strip() if lid is not None else ""
+                                try:
+                                    if ls:
+                                        ls = str(int(float(ls)))
+                                except (ValueError, TypeError):
+                                    pass
+                                if ls:
+                                    skip_ids.add(ls)
+            if skip_ids:
+                self._log(f"预处理：跳过 {len(skip_ids)} 个已标记 lane 的 RBDY 填充（lane id: {sorted(skip_ids)[:10]}…）")
+            else:
+                self._log("预处理：无 skip lane，填充全部空 RBDY")
+
             # 全量扫描补空 RBDY（先于 Excel 修复执行，避免删错误关联后被错误填充回填）
             self._log("===== 全量扫描补空 RBDY（预处理）=====")
             engine_pre = LaneFixEngine(lane_layer, self._log)
-            scan_pre = engine_pre.scan_and_fill_all_empty_rbdy()
+            scan_pre = engine_pre.scan_and_fill_all_empty_rbdy(skip_ids=skip_ids)
             self._log(f"预处理补空RBDY: left={scan_pre['left']} right={scan_pre['right']} fallback={scan_pre['fallback']}")
 
             # LANE 层

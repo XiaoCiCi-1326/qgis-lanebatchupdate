@@ -12,6 +12,8 @@ from qgis.PyQt.QtWidgets import QAction, QFileDialog, QMessageBox, QProgressDial
 from .reconstruct_config import DIR_ORIGINAL, load_algorithm_ids
 from .reconstruct_feedback import ReconstructFeedback
 from .reconstruct_workflow import ReconstructWorkflow
+from .lane_fix_engine import LaneFixEngine
+from .lane_fix_engine import LaneFixEngine
 
 
 class ReconstructController:
@@ -73,14 +75,10 @@ class ReconstructController:
 
     def fill_empty_rbdy(self):
         """全量扫描 LANE 补空 RBDY：独立按钮，在一键重构之后使用。"""
-        from .lane_fix_engine import LaneFixEngine
-        from qgis.core import(QgsProject)
         import re
+        from qgis.core import(QgsProject)
 
         self._log("===== 全量补空RBDY =====")
-
-        from qgis.core import(QgsProject)
-        import re
 
         # 找 LANE 图层
         lane_layer = None
@@ -119,6 +117,19 @@ class ReconstructController:
         rbdy_r = engine.field_map.get("RBDY_R")
         if not rbdy_l or not rbdy_r:
             self._log(f"字段未映射！RBDY_L={rbdy_l} RBDY_R={rbdy_r}", level="WARN")
+
+        # 自动执行步骤 8、9
+        self._log("===== 执行步骤 8、9 =====")
+        try:
+            workflow = ReconstructWorkflow(self.iface, self.plugin_dir, self._log)
+            workflow.data_dir = self.plugin_dir
+            algorithm_ids = load_algorithm_ids(self.plugin_dir)
+            feedback = ReconstructFeedback()
+            saved = workflow.run_steps_8_9_and_save(feedback, algorithm_ids)
+            self._log(f"步骤 8、9 完成，已保存 {saved} 个图层")
+        except Exception as e:
+            self._log(f"步骤 8、9 失败: {e}", level="WARN")
+
         self._save_log("fill_rbdy")
 
         QMessageBox.information(
