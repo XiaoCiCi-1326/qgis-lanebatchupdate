@@ -13,9 +13,11 @@ class ReconstructFeedback(QgsProcessingFeedback):
     def pushInfo(self, info, fatalError=False):
         super().pushInfo(info, fatalError)
         text = str(info)
-        self.progress_dialog.setLabelText(text)
+        if self.progress_dialog:
+            self.progress_dialog.setLabelText(text)
         self.log_fn(text, show_bar=False)
 
     def setProgressText(self, text):
         super().setProgressText(text)
-        self.progress_dialog.setLabelText(text)
+        if self.progress_dialog:
+            self.progress_dialog.setLabelText(text)

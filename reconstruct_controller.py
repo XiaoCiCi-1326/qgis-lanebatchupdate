@@ -75,32 +75,52 @@ class ReconstructController:
 
     def fill_empty_rbdy(self):
         """全量扫描 LANE 补空 RBDY：独立按钮，在一键重构之后使用。"""
-        import re
         from qgis.core import(QgsProject)
 
         self._log("===== 全量补空RBDY =====")
 
-        # 找 LANE 图层
+        # 找 LANE 图层（优先原始 shp，与 Excel 按钮逻辑一致）
         lane_layer = None
-        for name, layer in list(QgsProject.instance().mapLayers().items()):
-            if re.search(r"(?:^|_)lane(?:s)?(?:_|$|layer)", name, re.I) and layer.geometryType() in (1, 2):
-                # 优先选 Shapefile（原始数据层）
-                if lane_layer is None or (layer.type() == 0 and layer.storageType() == "ESRI Shapefile"):
+        for layer in list(QgsProject.instance().mapLayers().values()):
+            src = os.path.basename(layer.source().split("|", 1)[0])
+            if src.lower() == "lane.shp":
+                lane_layer = layer
+                break
+        # 兜底：按名字
+        if lane_layer is None:
+            for name, layer in list(QgsProject.instance().mapLayers().items()):
+                if name.upper() == "LANE":
                     lane_layer = layer
-                    if layer.type() == 0:
-                        self._log(f"选中 LANE 图层: {name} (Shapefile)", level="DEBUG")
-                    if not re.search(r"(?:^|_)lane(?:s)?(?:_|$|layer)", name, re.I):
-                        lane_layer = layer
-                        break
+                    break
+        # 再兜底：任意含 RBDY 字段的线图层
+        if lane_layer is None:
+            for layer in list(QgsProject.instance().mapLayers().values()):
+                field_names = [f.name().upper() for f in layer.fields()]
+                if "RBDY_L" in field_names or "BDYID_L" in field_names:
+                    lane_layer = layer
+                    break
 
         if lane_layer is None:
-            self._log("未找到 LANE 图层", level="WARN")
-            QMessageBox.warning(self.iface.mainWindow(), "未找到图层", "请先加载 LANE/边线图层")
+            self._log("未找到 LANE 图层（含 RBDY_L/R 字段）", level="WARN")
+            QMessageBox.warning(self.iface.mainWindow(), "未找到图层", "请先加载 LANE 图层（含 RBDY_L/R 字段）")
             return
 
-        # 打印可用字段用于诊断
+        self._log(f"选中 LANE 图层: {lane_layer.name()} ({os.path.basename(lane_layer.source())})")
         field_names = [f.name() for f in lane_layer.fields()]
         self._log(f"LANE 字段: {field_names}", level="DEBUG")
+
+        rbdy_l = None
+        rbdy_r = None
+        for fn in field_names:
+            fu = fn.upper()
+            if fu in ("RBDY_L", "BDYID_L") and not rbdy_l:
+                rbdy_l = fn
+            if fu in ("RBDY_R", "BDYID_R") and not rbdy_r:
+                rbdy_r = fn
+        if not rbdy_l or not rbdy_r:
+            self._log(f"LANE 无 RBDY 字段！RBDY_L={rbdy_l} RBDY_R={rbdy_r}", level="WARN")
+            QMessageBox.warning(self.iface.mainWindow(), "字段缺失", f"LANE 图层没有 RBDY_L/R 字段\n当前字段: {field_names}")
+            return
 
         if not lane_layer.isEditable() and not lane_layer.startEditing():
             self._log("无法开启图层编辑", level="WARN")
@@ -112,23 +132,19 @@ class ReconstructController:
         total = result["left"] + result["right"] + result["fallback"]
         self._log(f"全量补空RBDY完成: left={result['left']} right={result['right']} fallback={result['fallback']} 总计={total}")
 
-        # 打印 RBDY_L/R 字段是否被识别
-        rbdy_l = engine.field_map.get("RBDY_L")
-        rbdy_r = engine.field_map.get("RBDY_R")
-        if not rbdy_l or not rbdy_r:
-            self._log(f"字段未映射！RBDY_L={rbdy_l} RBDY_R={rbdy_r}", level="WARN")
-
         # 自动执行步骤 8、9
         self._log("===== 执行步骤 8、9 =====")
         try:
             workflow = ReconstructWorkflow(self.iface, self.plugin_dir, self._log)
             workflow.data_dir = self.plugin_dir
             algorithm_ids = load_algorithm_ids(self.plugin_dir)
-            feedback = ReconstructFeedback()
+            # ReconstructFeedback 构造需 progress_dialog，run_steps_8_9_and_save 传 None 即可
+            feedback = ReconstructFeedback(None, self._log)
             saved = workflow.run_steps_8_9_and_save(feedback, algorithm_ids)
             self._log(f"步骤 8、9 完成，已保存 {saved} 个图层")
         except Exception as e:
             self._log(f"步骤 8、9 失败: {e}", level="WARN")
+            self._log(traceback.format_exc(), level="DEBUG")
 
         self._save_log("fill_rbdy")
 
