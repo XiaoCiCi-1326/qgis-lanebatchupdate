@@ -247,7 +247,16 @@ class LaneFixController:
 
                 stats = engine.apply_all(lane_actions)
 
-                lane_layer.triggerRepaint()
+                # 强制提交 LANE，确保修改落盘，防止步骤 8/9 覆盖
+                try:
+                    if lane_layer.isEditable() and not lane_layer.commitChanges():
+                        errors = "; ".join(lane_layer.commitErrors())
+                        self._log(f"LANE 提交失败: {errors}", level="WARN")
+                    else:
+                        lane_layer.triggerRepaint()
+                        self._log("LANE 修改已提交", show_bar=False)
+                except Exception as exc:
+                    self._log(f"LANE 提交异常: {exc}", level="WARN")
 
                 all_stats["LANE"] = stats
 
@@ -273,7 +282,15 @@ class LaneFixController:
 
                     stats = fixer.apply_actions(roadlink_actions)
 
-                    roadlink_layer.triggerRepaint()
+                    try:
+                        if roadlink_layer.isEditable() and not roadlink_layer.commitChanges():
+                            errors = "; ".join(roadlink_layer.commitErrors())
+                            self._log(f"ROAD_LINK 提交失败: {errors}", level="WARN")
+                        else:
+                            roadlink_layer.triggerRepaint()
+                            self._log("ROAD_LINK 修改已提交", show_bar=False)
+                    except Exception as exc:
+                        self._log(f"ROAD_LINK 提交异常: {exc}", level="WARN")
 
                     all_stats["ROAD_LINK"] = stats
 
@@ -295,7 +312,15 @@ class LaneFixController:
 
                     stats = fixer.apply_actions(signal_actions)
 
-                    signal_layer.triggerRepaint()
+                    try:
+                        if signal_layer.isEditable() and not signal_layer.commitChanges():
+                            errors = "; ".join(signal_layer.commitErrors())
+                            self._log(f"SIGNAL 提交失败: {errors}", level="WARN")
+                        else:
+                            signal_layer.triggerRepaint()
+                            self._log("SIGNAL 修改已提交", show_bar=False)
+                    except Exception as exc:
+                        self._log(f"SIGNAL 提交异常: {exc}", level="WARN")
 
                     all_stats["SIGNAL"] = stats
 
