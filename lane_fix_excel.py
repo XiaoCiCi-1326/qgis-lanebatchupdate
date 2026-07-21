@@ -279,32 +279,31 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
             ]
 
     # 4.2 虚拟路口 SIGNAL 关联车道错误
-    if "signal" in compact.lower() and ("应关联车道" in compact or "不应挂接" in compact or "多余" in compact):
-        # "应关联车道: 4208325" → set LANES = 4208325
-        set_seg = re.search(r"应关联车道[：:\s]*(\d{6,})", compact)
-        if set_seg:
-            lane_id = set_seg.group(1)
+    # 错误格式：signal=4208005，多余[不应挂接lane: 4208325]
+    #                    signal=4208023，应挂接lane: 4208325
+    if "signal" in compact.lower() and ("应挂接" in compact or "不应挂接" in compact or "多余" in compact):
+        # 提取 SIGNAL 自己的 ID（用于 match_value = match_field）
+        sig_m = re.search(r"signal[=:]?\s*(\d{6,})", compact, re.I)
+        sig_id = sig_m.group(1) if sig_m else None
+
+        # 应挂接 lane → set LANES = lane_id
+        ying = re.search(r"应挂接lane[：:\s]*(\d{6,})", compact)
+        if ying:
+            lane_id = ying.group(1)
             return [
                 LaneFixAction(
-                    "set", "LANES", "ID", lane_id, [lane_id], raw,
-                    note="SIGNAL 应关联车道", layer="SIGNAL",
+                    "set", "LANES", "ID", sig_id or "", [lane_id], raw,
+                    note="SIGNAL 应挂接车道(set)", layer="SIGNAL",
                 )
             ]
-        # "不应挂接lane: 4208325" 或 "多余[不应挂接lane: 4208325]" → remove from LANES
-        remove_seg = re.search(r"(?:多余\[)?不应挂接lane[：:\s]*(\d{6,})", compact)
-        if remove_seg:
-            bad_lane = remove_seg.group(1)
-            # 从 compact 里找 signal id（通常是 SIGNAL 字段里的 ID）
-            signal_id = _extract_lane_id(compact)  # 复用这个函数提取数字 ID
-            if not signal_id:
-                sig_seg = re.search(r"signal[=:]?[_\s]*?(\d{6,})", compact, re.I)
-                signal_id = sig_seg.group(1) if sig_seg else None
-            # 从 compact 找 intersection 作为 match_value
-            int_seg = re.search(r"intersection[=:]?[_\s]*?(\d{6,})", compact, re.I)
-            match_val = int_seg.group(1) if int_seg else None
+
+        # 不应挂接 lane（多余）→ remove LANES 中的 lane_id
+        buying = re.search(r"(?:多余\[)?不应挂接lane[：:\s]*(\d{6,})", compact)
+        if buying and sig_id:
+            bad_lane = buying.group(1)
             return [
                 LaneFixAction(
-                    "remove", "LANES", "ID", match_val or signal_id or "", [bad_lane], raw,
+                    "remove", "LANES", "ID", sig_id, [bad_lane], raw,
                     note="SIGNAL 删除不应挂接车道", layer="SIGNAL",
                 )
             ]
