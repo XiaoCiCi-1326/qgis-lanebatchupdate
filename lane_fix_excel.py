@@ -256,14 +256,14 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
 
     # 2.5 路口内 ROAD_LINK BDYID_L/R 关联错误
     # 错误格式：linkid:4208007，左侧bdyid_l，关联的边线ID4208491错误
-    #          linkid:4208206，左侧bdyid_l，关联的边线ID4208253左右侧位错误
-    # 简单策略：直接找"错误"前面最近的 7 位数字（边线 ID）
+    # "错误"出现在边线ID数字之后，所以先找ID数字，再向前找"错误"
     if ("bdyid" in compact.lower() and "错误" in compact
             and ("路口内" in compact or "2.5" in raw)):
-        # 找"错误"（允许中间穿插"左右侧位"）前面的数字
-        # 找"错误"前面的数字（\u9519=错 \u8bef=误）
-        seg = re.search(r"(\d{6,})\s*\u9519\u8bef", compact)
-        mark_ids = [seg.group(1)] if seg else []
+        # 先找边线ID数字，再向前匹配"错误"
+        seg = re.search(r"(?:ID)?[：:\s]*([\d,，；]*)\s*错误", compact, re.IGNORECASE)
+        if not seg:
+            seg = re.search(r"([\d,，；]+)错误", compact)
+        mark_ids = _digits_from_segment(seg.group(1) if seg else compact)
         if link_id and mark_ids:
             # "左右侧位错误" → 从左右两侧都 remove
             if "左右侧位错误" in compact:
@@ -307,22 +307,6 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
         sig_m = re.search(r"signal[=:]?\s*(\d{6,})", compact, re.I)
         sig_id = sig_m.group(1) if sig_m else None
 
-        # 应挂接 lane → add LANES（多ID用|分隔）
-        ying = re.search(r"应挂接lane[：:\s]*([\d|\uff08\uff09,，；\s]+)", compact)
-        if ying:
-            raw_lanes = ying.group(1).strip()
-            # 去掉末尾的括号内容如"(机动)"
-            raw_lanes = re.sub(r"\([^)]{1,20}\)$", "", raw_lanes).strip()
-            # 按|分割提取各ID
-            add_ids = [lid.strip() for lid in re.split(r"[|]", raw_lanes) if re.match(r"^\d{6,}$", lid.strip())]
-            if add_ids and sig_id:
-                return [
-                    LaneFixAction(
-                        "add", "LANES", "ID", sig_id, add_ids, raw,
-                        note=f"SIGNAL 应挂接车道(add {len(add_ids)}个)", layer="SIGNAL",
-                    )
-                ]
-
         # 不应挂接 lane（多余）→ remove LANES 中的 lane_id
         buying = re.search(r"(?:多余\[)?不应挂接lane[：:\s]*(\d{6,})", compact)
         if buying and sig_id:
@@ -333,6 +317,20 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
                     note="SIGNAL 删除不应挂接车道", layer="SIGNAL",
                 )
             ]
+
+        # 应挂接 lane → add LANES（多ID用|分隔）
+        ying = re.search(r"应挂接lane[：:\s]*([\d|\uff08\uff09,，；\s]+)", compact)
+        if ying:
+            raw_lanes = ying.group(1).strip()
+            raw_lanes = re.sub(r"\([^)]{1,20}\)$", "", raw_lanes).strip()
+            add_ids = [lid.strip() for lid in re.split(r"[|]", raw_lanes) if re.match(r"^\d{6,}$", lid.strip())]
+            if add_ids and sig_id:
+                return [
+                    LaneFixAction(
+                        "add", "LANES", "ID", sig_id, add_ids, raw,
+                        note=f"SIGNAL 应挂接车道(add {len(add_ids)}个)", layer="SIGNAL",
+                    )
+                ]
 
     # 旧版单 ID 模式（兼容 ProcessShpFiles 文案）
     legacy = _parse_legacy_patterns(compact, raw)
