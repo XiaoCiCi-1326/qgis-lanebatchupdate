@@ -252,8 +252,15 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
             ]
 
     # 2.5 路口内 ROAD_LINK BDYID_L/R 关联错误
-    if ("bdyid" in compact.lower() and "错误" in compact and "左右侧位错误" not in compact and ("路口内" in compact or "2.5" in raw)):
-        seg = re.search(r"错误[^\d]*?边线[\s\S]{0,20}?(?:ID)?[\uff1a:\s]*([\d,\uff0c\uff1b\s]+)", compact, re.IGNORECASE)
+    # 错误格式：linkid:4208007，左侧bdyid_l，关联的边线ID4208491错误
+    # "错误"出现在边线ID数字之后，所以先找ID数字，再向前找"错误"
+    if ("bdyid" in compact.lower() and "错误" in compact and "左右侧位错误" not in compact
+            and ("路口内" in compact or "2.5" in raw)):
+        # 先找边线ID数字，再向前匹配"错误"
+        seg = re.search(r"(?:ID)?[：:\s]*([\d,，；]+)\s*错误", compact, re.IGNORECASE)
+        if not seg:
+            # 备选：数字直接跟"错误"无空格
+            seg = re.search(r"([\d,，；]+)错误", compact)
         mark_ids = _digits_from_segment(seg.group(1) if seg else compact)
         if link_id and mark_ids:
             side = "RBDY_R" if "bdyid_r" in compact.lower() or "右侧" in compact else "RBDY_L"
@@ -278,24 +285,29 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
                 )
             ]
 
-    # 4.2 虚拟路口 SIGNAL 关联车道错误
-    # 错误格式：signal=4208005，多余[不应挂接lane: 4208325]
-    #                    signal=4208023，应挂接lane: 4208325
+    # 4.1/4.2 虚拟路口 SIGNAL 关联车道错误
+    # 4.1格式：signal=4208005 应挂接lane: 4208299|4208323
+    # 4.2格式：signal=4208005(机动) 多余[不应挂接lane: 4208325]
+    #           signal=4208011(机动) 应挂接lane: 4208327
     if "signal" in compact.lower() and ("应挂接" in compact or "不应挂接" in compact or "多余" in compact):
-        # 提取 SIGNAL 自己的 ID（用于 match_value = match_field）
         sig_m = re.search(r"signal[=:]?\s*(\d{6,})", compact, re.I)
         sig_id = sig_m.group(1) if sig_m else None
 
-        # 应挂接 lane → set LANES = lane_id
-        ying = re.search(r"应挂接lane[：:\s]*(\d{6,})", compact)
+        # 应挂接 lane → add LANES（多ID用|分隔）
+        ying = re.search(r"应挂接lane[：:\s]*([\d|\uff08\uff09,，；\s]+)", compact)
         if ying:
-            lane_id = ying.group(1)
-            return [
-                LaneFixAction(
-                    "set", "LANES", "ID", sig_id or "", [lane_id], raw,
-                    note="SIGNAL 应挂接车道(set)", layer="SIGNAL",
-                )
-            ]
+            raw_lanes = ying.group(1).strip()
+            # 去掉末尾的括号内容如"(机动)"
+            raw_lanes = re.sub(r"\([^)]{1,20}\)$", "", raw_lanes).strip()
+            # 按|分割提取各ID
+            add_ids = [lid.strip() for lid in re.split(r"[|]", raw_lanes) if re.match(r"^\d{6,}$", lid.strip())]
+            if add_ids and sig_id:
+                return [
+                    LaneFixAction(
+                        "add", "LANES", "ID", sig_id, add_ids, raw,
+                        note=f"SIGNAL 应挂接车道(add {len(add_ids)}个)", layer="SIGNAL",
+                    )
+                ]
 
         # 不应挂接 lane（多余）→ remove LANES 中的 lane_id
         buying = re.search(r"(?:多余\[)?不应挂接lane[：:\s]*(\d{6,})", compact)
