@@ -77,7 +77,7 @@ def _pick_problem_cells(cells: List[str]) -> List[str]:
     cands = [
         c
         for c in cells
-        if re.search(r"linkid|laneid|left_rvs|缺失|错误|不应记录", c, re.I)
+        if re.search(r"linkid|laneid|left_rvs|lmark_[lr]|缺失|错误|不应记录|顺序不对", c, re.I)
     ]
     return cands
 
