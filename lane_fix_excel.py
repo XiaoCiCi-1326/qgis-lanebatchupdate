@@ -125,16 +125,15 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
         single_missing = re.search(r"lane[的].*?left_rvs.*?漏记录[：:\s]*(\d{6,})", compact, re.IGNORECASE)
     if not single_missing:
         single_missing = re.search(r"left_rvs.*?漏记录[：:\s]*(\d{6,})", compact, re.IGNORECASE)
-    if not single_missing:
+    if single_missing:
+        # 匹配成功 → 直接返回，提取 lane_id 补充
         lane_id_from_text = _extract_lane_id(compact)
-        if lane_id_from_text and "漏记录" in compact:
-            missing_id = re.search(r"漏记录[：:\s]*(\d{6,})", compact)
-            if missing_id:
-                target_id = missing_id.group(1)
-                return [
-                    LaneFixAction("add", "LEFT_RVS", "ID", lane_id_from_text, [target_id], raw,
-                                  note="left_rvs 漏记录补充")
-                ]
+        missing_id = single_missing.group(1)
+        return [
+            LaneFixAction("add", "LEFT_RVS", "ID",
+                          lane_id_from_text or missing_id, [missing_id], raw,
+                          note="left_rvs 漏记录补充")
+        ]
 
     link_id = _extract_link_id(compact)
     lane_id = _extract_lane_id(compact)

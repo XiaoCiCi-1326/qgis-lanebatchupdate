@@ -234,6 +234,12 @@ class LaneFixController:
 
 
 
+            # 全量扫描补空 RBDY（先于 Excel 修复执行，避免删错误关联后被错误填充回填）
+            self._log("===== 全量扫描补空 RBDY（预处理）=====")
+            engine_pre = LaneFixEngine(lane_layer, self._log)
+            scan_pre = engine_pre.scan_and_fill_all_empty_rbdy()
+            self._log(f"预处理补空RBDY: left={scan_pre['left']} right={scan_pre['right']} fallback={scan_pre['fallback']}")
+
             # LANE 层
 
             if lane_actions:
@@ -298,17 +304,6 @@ class LaneFixController:
 
 
 
-            # 全量扫描补空 RBDY
-
-            progress.setLabelText("全量扫描 LANE 补空 RBDY…")
-
-            self._log("===== 全量扫描补空 RBDY =====")
-
-            # 全量装空RBDY已禁用\uff0c改由2.5/2.6直接改ROAD_LINK
-            engine2 = LaneFixEngine(lane_layer, self._log)
-            scan_result = engine2.scan_and_fill_all_empty_rbdy()
-
-            lane_layer.triggerRepaint()
 
 
 

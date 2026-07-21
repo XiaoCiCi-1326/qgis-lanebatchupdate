@@ -74,7 +74,7 @@ class ReconstructController:
     def fill_empty_rbdy(self):
         """全量扫描 LANE 补空 RBDY：独立按钮，在一键重构之后使用。"""
         from .lane_fix_engine import LaneFixEngine
-        from qgis.core import(QgsProject, QGIS_VERSION)
+        from qgis.core import(QgsProject)
         import re
 
         self._log("===== 全量补空RBDY =====")
