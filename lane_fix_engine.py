@@ -178,8 +178,8 @@ class LaneFixEngine:
     }
 
     def _apply_field_move(self, feat, field_from, field_to, mark_ids):
-        """单字段或成对字段移动边线 ID（仅按 Excel 侧位错误移动，不自动删关联）。"""
-        changed_any = False
+        """单字段或成对字段移动边线 ID，返回需要写入的改动 dict {field_name: new_val}。"""
+        changes = {}  # {actual_field_name: new_val}
         pairs = [(field_from, field_to)]
         sync = self._LMARK_SYNC.get(field_from)
         if sync:
@@ -197,10 +197,11 @@ class LaneFixEngine:
             )
             if not changed:
                 continue
-            feat[actual_from] = new_from if new_from else None
-            feat[actual_to] = new_to if new_to else None
-            changed_any = True
-        return changed_any
+            if new_from:
+                changes[actual_from] = new_from
+            if new_to:
+                changes[actual_to] = new_to
+        return changes
 
     def _fill_empty_rbdy_from_lrvs(self, road_id: str, logical_rbdy: str) -> int:
         """
@@ -462,6 +463,7 @@ class LaneFixEngine:
                     feat = self.lane_layer.getFeature(fid)
                     if not feat.isValid():
                         continue
+                    new_val = None
                     changed = False
                     if action.action == "add":
                         prepend = (
@@ -501,12 +503,29 @@ class LaneFixEngine:
                         else:
                             changed = False
                     elif action.action == "move":
-                        changed = self._apply_field_move(
+                        field_changes = self._apply_field_move(
                             feat,
                             action.target_field,
                             action.target_field_to,
                             action.mark_ids,
                         )
+                        for fname, fval in field_changes.items():
+                            self.lane_layer.changeAttributeValue(fid, feat.fieldNameIndex(fname), fval)
+                        if not field_changes:
+                            self.log(
+                                f"无变化 lane={action.match_value} {action.target_field} "
+                                f"move {action.mark_ids}",
+                                show_bar=False,
+                            )
+                            continue
+                        touched.add(fid)
+                        stats["applied"] += 1
+                        self.log(
+                            f"laneid={action.match_value} move {action.mark_ids} "
+                            f"{action.target_field}->{action.target_field_to} OK",
+                            show_bar=False,
+                        )
+                        continue
                     else:
                         stats["skipped"] += 1
                         continue
@@ -519,21 +538,14 @@ class LaneFixEngine:
                         )
                         continue
 
-                    self.lane_layer.updateFeature(feat)
+                    self.lane_layer.changeAttributeValue(fid, feat.fieldNameIndex(target_field), new_val)
                     touched.add(fid)
                     stats["applied"] += 1
-                    if action.action == "move":
-                        self.log(
-                            f"laneid={action.match_value} move {action.mark_ids} "
-                            f"{action.target_field}->{action.target_field_to} OK",
-                            show_bar=False,
-                        )
-                    else:
-                        self.log(
-                            f"laneid={action.match_value} {target_field} "
-                            f"{action.action} {action.mark_ids} OK",
-                            show_bar=False,
-                        )
+                    self.log(
+                        f"laneid={action.match_value} {target_field} "
+                        f"{action.action} {action.mark_ids} OK",
+                        show_bar=False,
+                    )
 
             if not was_editing:
                 if not self.lane_layer.commitChanges():

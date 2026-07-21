@@ -1,20 +1,10 @@
 # 更新日志
 
 ## v1.0.4.25
-- 修复 commit 问题：LANE/ROAD_LINK/SIGNAL 层修改后强制 commitChanges，防止步骤 8/9 覆盖
-- 修复属性表不刷新：commitChanges 后触发 triggerRepaint 并打印提交日志
+- 修复 swap/add/remove/move 所有操作写盘失败：`updateFeature` 替换为 `changeAttributeValue`（shapefile 不支持 updateFeature 写盘，`commitChanges` 后数据不变）
+- `_apply_field_move` 改为返回改动字段 dict，由 apply_actions 统一调用 `changeAttributeValue`
 
 ## v1.0.4.24
-- 修复 swap 执行：swap 分支添加 continue 防止 fall-through 到"无变化"判断
-- 修复 _swap_ids：空值保护防止数值类型字段崩溃
-- 删除 apply_actions 中 swap 死代码（日志重复）
-
-## v1.0.4.23
-- 修复「顺序不对」swap 规则重复触发问题（LMARK_R/L 与 LEFT_RVS 规则互斥）
-- 修复 lmark_r/l swap 字段名错误：lmark_r → BDY_RIGHT，lmark_l → BDY_LEFT
-- Excel 改错 swap 增加详细日志（跳过原因、交换结果）
-
-## v1.0.4.12
 - 修复「顺序不对」swap 规则重复触发问题（LMARK_R/L 与 LEFT_RVS 规则互斥）
 - 修复 lmark_r/l swap 字段名错误：lmark_r → BDY_RIGHT，lmark_l → BDY_LEFT
 - Excel 改错 swap 增加详细日志（跳过原因、交换结果）
