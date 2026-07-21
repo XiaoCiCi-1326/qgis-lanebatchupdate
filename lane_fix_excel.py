@@ -103,6 +103,25 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
                 )
             ]
 
+    # 1.3 LMARK_R/L 记录顺序不对（边线4211704与4211705顺序错误）
+    if re.search(r"lmark_[lr]记录顺序不对", compact):
+        lane_id = _extract_lane_id(compact)
+        seg = re.search(r"边线[（(](\d[\d,，、\s]+?)与(\d[\d,，、\s]+?)顺序错误[）)]", compact)
+        if not seg:
+            seg = re.search(r"(\d{6,})与(\d{6,})顺序错误", compact)
+        if seg:
+            a = _digits_from_segment(seg.group(1))
+            b = _digits_from_segment(seg.group(2))
+            mark_ids = (a + b) if a and b else (a or b or [])
+            if lane_id and mark_ids:
+                field = "LMARK_R" if "lmark_r" in compact.lower() else "LMARK_L"
+                return [
+                    LaneFixAction(
+                        "swap", field, "ID", lane_id, mark_ids[:2], raw,
+                        note=f"{field} 交换顺序",
+                    )
+                ]
+
     # 1.1 LEFT_RVS 互挂缺失
     mutual = re.search(
         r"(\d{6,})与(\d{6,})互为对方left_rvs.*?均未被对方记录",
