@@ -256,14 +256,14 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
 
     # 2.5 路口内 ROAD_LINK BDYID_L/R 关联错误
     # 错误格式：linkid:4208007，左侧bdyid_l，关联的边线ID4208491错误
-    # "错误"出现在边线ID数字之后，所以先找ID数字，再向前找"错误"
+    #          linkid:4208206，左侧bdyid_l，关联的边线ID4208253左右侧位错误
+    # 简单策略：直接找"错误"前面最近的 7 位数字（边线 ID）
     if ("bdyid" in compact.lower() and "错误" in compact
             and ("路口内" in compact or "2.5" in raw)):
-        # 先找边线ID数字，再向前匹配"错误"
-        seg = re.search(r"(?:ID)?[：:\s]*([\d,，；]*)\s*错误", compact, re.IGNORECASE)
-        if not seg:
-            seg = re.search(r"([\d,，；]+)错误", compact)
-        mark_ids = _digits_from_segment(seg.group(1) if seg else compact)
+        # 找"错误"（允许中间穿插"左右侧位"）前面的数字
+        # 找"错误"前面的数字（\u9519=错 \u8bef=误）
+        seg = re.search(r"(\d{6,})\s*\u9519\u8bef", compact)
+        mark_ids = [seg.group(1)] if seg else []
         if link_id and mark_ids:
             # "左右侧位错误" → 从左右两侧都 remove
             if "左右侧位错误" in compact:
