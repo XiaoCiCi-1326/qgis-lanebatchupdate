@@ -129,8 +129,11 @@ class ReconstructController:
         engine = LaneFixEngine(lane_layer, self._log)
         result = engine.scan_and_fill_all_empty_rbdy()
 
-        total = result["left"] + result["right"] + result["fallback"]
-        self._log(f"全量补空RBDY完成: left={result['left']} right={result['right']} fallback={result['fallback']} 总计={total}")
+        total = sum(result.values())
+        self._log(
+            f"全量补空RBDY完成: rev1={result['rev1']} rev2={result['rev2']} "
+            f"fwd1={result['fwd1']} fwd2={result['fwd2']} fallback={result['fallback']} 总计={total}"
+        )
 
         # 自动执行步骤 8、9
         self._log("===== 执行步骤 8、9 =====")
@@ -150,7 +153,13 @@ class ReconstructController:
 
         QMessageBox.information(
             self.iface.mainWindow(), "全量补空RBDY",
-            f"补空完成\n左侧={result['left']} 右侧={result['right']} fallback={result['fallback']}\n总计={total} 条"
+            f"补空完成\n"
+            f"rev1(LEFT_RVS→对向RBDY_R)={result['rev1']}\n"
+            f"rev2(RIGHT_RVS→对向RBDY_R)={result['rev2']}\n"
+            f"fwd1(LEFT_FWD→同向RBDY_L)={result['fwd1']}\n"
+            f"fwd2(RIGHT_FWD→同向RBDY_L)={result['fwd2']}\n"
+            f"fallback(BDY)={result['fallback']}\n"
+            f"总计={total} 条"
         )
 
     def _pick_source_dir(self, workflow):

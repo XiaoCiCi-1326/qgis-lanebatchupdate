@@ -19,7 +19,10 @@ _FIELD_ALIASES = {
     "RBDY_R": ("RBDY_R", "BDYID_R", "bdyid_r"),
     "ID": ("ID",),
     "ROAD_ID": ("ROAD_ID", "LINKID", "LINK_ID"),
-    "LEFT_RVS": ("LEFT_RVS", "LEFT_RVS", "left_rvs"),
+    "LEFT_RVS": ("LEFT_RVS", "left_rvs"),
+    "RIGHT_RVS": ("RIGHT_RVS", "right_rvs"),
+    "LEFT_FWD": ("LEFT_FWD", "left_fwd"),
+    "RIGHT_FWD": ("RIGHT_FWD", "right_fwd"),
 }
 
 # SIGNAL 层字段别名
@@ -205,29 +208,49 @@ class LaneFixEngine:
 
     def _fill_empty_rbdy_from_lrvs(self, road_id: str, logical_rbdy: str) -> int:
         """
-        RBDY_L/R 为空时推断补全，兜底策略：
-        1. RBDY_L → 优先 LEFT_RVS 对向 lane.BDY_LEFT
-        2. RBDY_L → 其次 RIGHT_RVS 对向 lane.BDY_RIGHT
-        3. RBDY_L → 最后用本车道 BDY_LEFT
-        4. RBDY_R → 优先 RIGHT_RVS 对向 lane.BDY_RIGHT
-        5. RBDY_R → 其次 LEFT_RVS 对向 lane.BDY_LEFT
-        6. RBDY_R → 最后用本车道 BDY_RIGHT
+        RBDY_L/R 为空时推断补全（Excel边线改错使用），策略：
+        - RBDY_L:
+          1. 从本车道 LEFT_RVS 获取对向车道ID → 取其 RBDY_R
+          2. 从本车道 RIGHT_RVS 获取对向车道ID → 取其 RBDY_R
+          3. 从本车道 LEFT_FWD 获取同向车道ID → 取其 RBDY_L
+          4. 从本车道 RIGHT_FWD 获取同向车道ID → 取其 RBDY_L
+          5. 最后用本车道 BDY_LEFT
+        - RBDY_R:
+          1. 从本车道 RIGHT_RVS 获取对向车道ID → 取其 RBDY_L
+          2. 从本车道 LEFT_RVS 获取对向车道ID → 取其 RBDY_L
+          3. 从本车道 RIGHT_FWD 获取同向车道ID → 取其 RBDY_R
+          4. 从本车道 LEFT_FWD 获取同向车道ID → 取其 RBDY_R
+          5. 最后用本车道 BDY_RIGHT
         """
-        rev_fields = (
-            [("LEFT_RVS", "BDY_LEFT"), ("RIGHT_RVS", "BDY_RIGHT")]
-            if logical_rbdy == "RBDY_L"
-            else [("RIGHT_RVS", "BDY_RIGHT"), ("LEFT_RVS", "BDY_LEFT")]
-        )
-        own_bdy = self._resolve_actual_field("BDY_LEFT" if logical_rbdy == "RBDY_L" else "BDY_RIGHT")
+        if logical_rbdy == "RBDY_L":
+            strategies = [
+                ("LEFT_RVS", "RBDY_R"),    # 1. LEFT_RVS → 对向车道 RBDY_R
+                ("RIGHT_RVS", "RBDY_R"),   # 2. RIGHT_RVS → 对向车道 RBDY_R
+                ("LEFT_FWD", "RBDY_L"),    # 3. LEFT_FWD → 同向车道 RBDY_L
+                ("RIGHT_FWD", "RBDY_L"),   # 4. RIGHT_FWD → 同向车道 RBDY_L
+            ]
+            own_bdy_field = "BDY_LEFT"     # 5. 兜底用本车道 BDY_LEFT
+        else:  # RBDY_R
+            strategies = [
+                ("RIGHT_RVS", "RBDY_L"),   # 1. RIGHT_RVS → 对向车道 RBDY_L
+                ("LEFT_RVS", "RBDY_L"),    # 2. LEFT_RVS → 对向车道 RBDY_L
+                ("RIGHT_FWD", "RBDY_R"),   # 3. RIGHT_FWD → 同向车道 RBDY_R
+                ("LEFT_FWD", "RBDY_R"),     # 4. LEFT_FWD → 同向车道 RBDY_R
+            ]
+            own_bdy_field = "BDY_RIGHT"    # 5. 兜底用本车道 BDY_RIGHT
+
         rbdy_field = self._resolve_actual_field(logical_rbdy)
         if not rbdy_field:
+            self.log(f"[fill_from_lrvs] 跳过：RBDY 字段不存在: {logical_rbdy}", show_bar=False)
             return 0
 
         feat_ids = self.lane_by_road.get(road_id, [])
         if not feat_ids:
+            self.log(f"[fill_from_lrvs] 跳过：未找到 ROAD_ID={road_id} 的车道", show_bar=False)
             return 0
 
         if not self.lane_layer.startEditing():
+            self.log(f"[fill_from_lrvs] 跳过：无法开启图层编辑", show_bar=False)
             return 0
         updated = 0
         try:
@@ -236,65 +259,85 @@ class LaneFixEngine:
                 if not self.is_empty(feat[rbdy_field]):
                     continue
 
+                lane_id = self.norm_id(feat['ID'])
                 filled = False
-                # 策略 1/2：先从对向车道推断
-                for rev_name, bdy_name in rev_fields:
-                    rev_f = self._resolve_actual_field(rev_name)
-                    bdy_f = self._resolve_actual_field(bdy_name)
-                    if not (rev_f and bdy_f):
+
+                # 策略 1~4：从对向/同向车道推断
+                for idx, (nav_field, target_rbdy) in enumerate(strategies, 1):
+                    nav_f = self._resolve_actual_field(nav_field)
+                    target_rbdy_f = self._resolve_actual_field(target_rbdy)
+                    if not nav_f:
+                        self.log(f"  [lane {lane_id}] 跳过：字段 {nav_field} 不存在", show_bar=False)
                         continue
-                    rev_ids = self.split_ids(feat[rev_f])
-                    if not rev_ids:
+                    if not target_rbdy_f:
+                        self.log(f"  [lane {lane_id}] 跳过：字段 {target_rbdy} 不存在", show_bar=False)
                         continue
-                    rev_fid = self.lane_by_id.get(rev_ids[0])
-                    if rev_fid is None:
+                    nav_ids = self.split_ids(feat[nav_f])
+                    if not nav_ids:
+                        self.log(f"  [lane {lane_id}] 跳过：{nav_field} 为空", show_bar=False)
                         continue
-                    rev_feat = self.lane_layer.getFeature(rev_fid)
-                    bdy_val = rev_feat[bdy_f]
-                    if self.is_empty(bdy_val):
+                    nav_fid = self.lane_by_id.get(nav_ids[0])
+                    if nav_fid is None:
+                        self.log(f"  [lane {lane_id}] 跳过：{nav_field}={nav_ids[0]} 在图层中未找到", show_bar=False)
                         continue
-                    feat[rbdy_field] = bdy_val
+                    nav_feat = self.lane_layer.getFeature(nav_fid)
+                    rbdy_val = nav_feat[target_rbdy_f]
+                    if self.is_empty(rbdy_val):
+                        self.log(f"  [lane {lane_id}] 跳过：{nav_field}={nav_ids[0]}.{target_rbdy} 为空", show_bar=False)
+                        continue
+                    feat[rbdy_field] = rbdy_val
                     self.lane_layer.updateFeature(feat)
                     updated += 1
+                    method = f"rev{idx}" if idx <= 2 else f"fwd{idx-2}"
                     self.log(
-                        f"laneid={self.norm_id(feat['ID'])} {logical_rbdy}={bdy_val} "
-                        f"(←对向lane {rev_ids[0]}.{bdy_name} 推断)",
+                        f"[lane {lane_id}] {logical_rbdy}={rbdy_val} "
+                        f"(←{nav_field}→{nav_ids[0]}.{target_rbdy} 推断-{method})",
                         show_bar=False,
                     )
                     filled = True
                     break
 
-                # 策略 3/6：本车道 BDY 直接兜底
-                if not filled and own_bdy:
-                    bdy_val = feat[own_bdy]
-                    if not self.is_empty(bdy_val):
-                        feat[rbdy_field] = bdy_val
-                        self.lane_layer.updateFeature(feat)
-                        updated += 1
-                        self.log(
-                            f"laneid={self.norm_id(feat['ID'])} {logical_rbdy}={bdy_val} "
-                            f"(←本车道 {own_bdy} 兜底)",
-                            show_bar=False,
-                        )
+                # 策略 5：本车道 BDY 兜底
+                if not filled and own_bdy_field:
+                    own_bdy = self._resolve_actual_field(own_bdy_field)
+                    if own_bdy:
+                        bdy_val = feat[own_bdy]
+                        if not self.is_empty(bdy_val):
+                            feat[rbdy_field] = bdy_val
+                            self.lane_layer.updateFeature(feat)
+                            updated += 1
+                            self.log(
+                                f"[lane {lane_id}] {logical_rbdy}={bdy_val} "
+                                f"(←本车道 {own_bdy} 兜底-fallback)",
+                                show_bar=False,
+                            )
+                        else:
+                            self.log(f"  [lane {lane_id}] 无法填充：{own_bdy} 也为空", show_bar=False)
+                    else:
+                        self.log(f"  [lane {lane_id}] 无法填充：字段 {own_bdy_field} 不存在", show_bar=False)
+                elif not filled:
+                    self.log(f"  [lane {lane_id}] 无法填充：所有策略都失败（5条路都走不通）", show_bar=False)
 
             if not self.lane_layer.commitChanges():
                 self.lane_layer.rollBack()
+                self.log(f"[fill_from_lrvs] 保存失败", show_bar=False)
                 return 0
-        except Exception:
+        except Exception as e:
             self.lane_layer.rollBack()
+            self.log(f"[fill_from_lrvs] 异常: {e}", show_bar=False)
             return 0
         return updated
 
     def scan_and_fill_all_empty_rbdy(self) -> Dict[str, int]:
         """
-        全量扫描所有 lane，对 RBDY_L/R 为空的字段按三级策略补全。
+        全量扫描所有 lane，对 RBDY_L/R 为空的字段按五级策略补全。
         """
         rbdy_l_field = self._resolve_actual_field("RBDY_L")
         rbdy_r_field = self._resolve_actual_field("RBDY_R")
         if not (rbdy_l_field and rbdy_r_field):
-            return {"left": 0, "right": 0, "fallback": 0}
+            return {"rev1": 0, "rev2": 0, "fwd1": 0, "fwd2": 0, "fallback": 0}
 
-        result = {"left": 0, "right": 0, "fallback": 0}
+        result = {"rev1": 0, "rev2": 0, "fwd1": 0, "fwd2": 0, "fallback": 0}
         was_editing = self.lane_layer.isEditable()
         if not was_editing and not self.lane_layer.startEditing():
             return result
@@ -326,16 +369,17 @@ class LaneFixEngine:
 
             if not was_editing and not self.lane_layer.commitChanges():
                 self.lane_layer.rollBack()
-                return {"left": 0, "right": 0, "fallback": 0}
+                return {"rev1": 0, "rev2": 0, "fwd1": 0, "fwd2": 0, "fallback": 0}
         except Exception:
             if not was_editing:
                 self.lane_layer.rollBack()
-            return result
+            return {"rev1": 0, "rev2": 0, "fwd1": 0, "fwd2": 0, "fallback": 0}
 
         total = sum(result.values())
         self.log(
             f"[全量补RBDY] 完成: 共填充 {total} 条 "
-            f"(left={result['left']} right={result['right']} fallback={result['fallback']})",
+            f"(rev1={result['rev1']} rev2={result['rev2']} "
+            f"fwd1={result['fwd1']} fwd2={result['fwd2']} fallback={result['fallback']})",
             show_bar=False,
         )
         return result
@@ -344,38 +388,63 @@ class LaneFixEngine:
         """
         对单个 feature 尝试填充指定 RBDY 字段。
         返回 (filled: bool, method: str)  filled=True 时 feat 已被修改。
+
+        推断策略：
+        - RBDY_L:
+          1. 从本车道 LEFT_RVS 获取对向车道ID → 取其 RBDY_R
+          2. 从本车道 RIGHT_RVS 获取对向车道ID → 取其 RBDY_R
+          3. 从本车道 LEFT_FWD 获取同向车道ID → 取其 RBDY_L
+          4. 从本车道 RIGHT_FWD 获取同向车道ID → 取其 RBDY_L
+          5. 最后用本车道 BDY_LEFT
+        - RBDY_R:
+          1. 从本车道 RIGHT_RVS 获取对向车道ID → 取其 RBDY_L
+          2. 从本车道 LEFT_RVS 获取对向车道ID → 取其 RBDY_L
+          3. 从本车道 RIGHT_FWD 获取同向车道ID → 取其 RBDY_R
+          4. 从本车道 LEFT_FWD 获取同向车道ID → 取其 RBDY_R
+          5. 最后用本车道 BDY_RIGHT
         """
-        rev_fields = (
-            [("LEFT_RVS", "BDY_LEFT"), ("RIGHT_RVS", "BDY_RIGHT")]
-            if logical_rbdy == "RBDY_L"
-            else [("RIGHT_RVS", "BDY_RIGHT"), ("LEFT_RVS", "BDY_LEFT")]
-        )
-        own_bdy_f = self._resolve_actual_field(
-            "BDY_LEFT" if logical_rbdy == "RBDY_L" else "BDY_RIGHT"
-        )
+        # 策略 1~4：对向/同向车道推断
+        if logical_rbdy == "RBDY_L":
+            strategies = [
+                ("LEFT_RVS", "RBDY_R"),    # 1. LEFT_RVS → 对向车道 RBDY_R
+                ("RIGHT_RVS", "RBDY_R"),   # 2. RIGHT_RVS → 对向车道 RBDY_R
+                ("LEFT_FWD", "RBDY_L"),    # 3. LEFT_FWD → 同向车道 RBDY_L
+                ("RIGHT_FWD", "RBDY_L"),   # 4. RIGHT_FWD → 同向车道 RBDY_L
+            ]
+            own_bdy_field = "BDY_LEFT"     # 5. 兜底用本车道 BDY_LEFT
+        else:  # RBDY_R
+            strategies = [
+                ("RIGHT_RVS", "RBDY_L"),   # 1. RIGHT_RVS → 对向车道 RBDY_L
+                ("LEFT_RVS", "RBDY_L"),    # 2. LEFT_RVS → 对向车道 RBDY_L
+                ("RIGHT_FWD", "RBDY_R"),   # 3. RIGHT_FWD → 同向车道 RBDY_R
+                ("LEFT_FWD", "RBDY_R"),     # 4. LEFT_FWD → 同向车道 RBDY_R
+            ]
+            own_bdy_field = "BDY_RIGHT"    # 5. 兜底用本车道 BDY_RIGHT
+
         rbdy_f = self._resolve_actual_field(logical_rbdy)
 
-        # 策略 1/2：从对向车道推断
-        for rev_name, bdy_name in rev_fields:
-            rev_f = self._resolve_actual_field(rev_name)
-            bdy_f = self._resolve_actual_field(bdy_name)
-            if not (rev_f and bdy_f):
+        # 策略 1~4：从对向/同向车道推断
+        for idx, (nav_field, target_rbdy) in enumerate(strategies, 1):
+            nav_f = self._resolve_actual_field(nav_field)
+            target_rbdy_f = self._resolve_actual_field(target_rbdy)
+            if not (nav_f and target_rbdy_f):
                 continue
-            rev_ids = self.split_ids(feat[rev_f])
-            if not rev_ids:
+            nav_ids = self.split_ids(feat[nav_f])
+            if not nav_ids:
                 continue
-            rev_fid = self.lane_by_id.get(rev_ids[0])
-            if rev_fid is None:
+            nav_fid = self.lane_by_id.get(nav_ids[0])
+            if nav_fid is None:
                 continue
-            rev_feat = self.lane_layer.getFeature(rev_fid)
-            bdy_val = rev_feat[bdy_f]
-            if self.is_empty(bdy_val):
+            nav_feat = self.lane_layer.getFeature(nav_fid)
+            rbdy_val = nav_feat[target_rbdy_f]
+            if self.is_empty(rbdy_val):
                 continue
-            feat[rbdy_f] = bdy_val
-            method = "left" if rev_name == "LEFT_RVS" else "right"
+            feat[rbdy_f] = rbdy_val
+            method = f"rev{idx}" if idx <= 2 else f"fwd{idx-2}"
             return True, method
 
-        # 策略 3/6：本车道 BDY 兜底（2.5/2.6 已直接改 ROAD_LINK，fallback 不会再引入错误）
+        # 策略 5：本车道 BDY 兜底
+        own_bdy_f = self._resolve_actual_field(own_bdy_field)
         if own_bdy_f:
             bdy_val = feat[own_bdy_f]
             if not self.is_empty(bdy_val):

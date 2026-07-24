@@ -50,6 +50,7 @@ def _extract_link_id(compact: str) -> Optional[str]:
     for pat in (
         r"link\s*id\s*[：:=]\s*(\d{6,})",
         r"linkid\s*[：:=]\s*(\d{6,})",
+        r"linkid=(\d{6,})",  # linkid=4208117 格式
     ):
         m = re.search(pat, compact, re.IGNORECASE)
         if m:
@@ -89,6 +90,33 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
         return []
 
     compact = re.sub(r"\s+", " ", raw)
+
+    # 1.3 lane 级别 lmark 缺失边线（左侧/右侧）
+    # 格式：【问题#3】当前laneid 4215761 左侧的lmark_l缺失了边线：4215735
+    #       当前laneid 4215761 右侧的lmark_r缺失了边线：4215736
+    lmark_missing = re.search(
+        r"(?:laneid|lane\s*id)\s*[：:=\s]*(\d{6,}).*?"
+        r"(?:lmark_[lr]|([左右])侧).*?"
+        r"缺失(?:了)?边线[：:\s]*(\d{6,})",
+        compact,
+        re.IGNORECASE,
+    )
+    if lmark_missing and not re.search(r"lmark.*顺序", compact):
+        lane_id = lmark_missing.group(1)
+        side = lmark_missing.group(2)
+        missing_id = lmark_missing.group(3)
+        if side == "左" or re.search(r"lmark_l", compact, re.IGNORECASE):
+            field = "BDY_LEFT"
+        elif side == "右" or re.search(r"lmark_r", compact, re.IGNORECASE):
+            field = "BDY_RIGHT"
+        else:
+            field = "BDY_LEFT"
+        return [
+            LaneFixAction(
+                "add", field, "ID", lane_id, [missing_id], raw,
+                note=f"lmark {field} 缺失边线补上",
+            )
+        ]
 
     # 1.3 LMARK_R/L 顺序不对（边线4211704与4211705顺序错误）
     # lmark_r -> BDY_RIGHT, lmark_l -> BDY_LEFT
@@ -156,10 +184,78 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
 
     link_id = _extract_link_id(compact)
     lane_id = _extract_lane_id(compact)
+    compact_lower = compact.lower()
+
+    # 1.7 路口lane挂接缺失边线（匹配优先级最高，防止被 2.3/2.6 误捕）
+    # 格式1：linkid=4208117 ···缺失边线:4208106
+    # 格式2：linkid=4208117 路口lane挂接缺失:4208106
+    #       → 删除该 lane ID 的 RBDY_L/RBDY_R 中的错误边线 ID
+    if re.search(r"(lane下降缺失边线|路口lane挂接缺失)", compact_lower):
+        if link_id:
+            seg = re.search(r"(?:缺失边线|挂接缺失)[：:\s]*([\d,，；]+)", compact)
+            if not seg:
+                seg = re.search(r"(?:缺失边线|挂接缺失)[：:\s]*(.+)", compact)
+            mark_ids = _digits_from_segment(seg.group(1) if seg else compact)
+            if mark_ids:
+                side = "RBDY_R" if re.search(r"右侧|右侧bdyid_r", compact_lower) else "RBDY_L"
+                return [
+                    LaneFixAction(
+                        "remove", side, "ROAD_ID", link_id, mark_ids, raw,
+                        note=f"1.7 lane下降删除错误边线 {len(mark_ids)} 个",
+                    )
+                ]
+
+    # 2.5 路口内 ROAD_LINK BDYID_L/R 关联错误
+    # 错误格式1：linkid:4208270，左侧bdyid_l，关联的边线ID4208199,4208200左右侧位错误
+    # 错误格式2：【问题#11】linkid:4215751，左侧bdyid_l，关联的边线ID4215798错误
+    # "bdyid" 出现在 compact_lower 中；侧边用 lower 后比较
+    if ("bdyid" in compact_lower and "错误" in compact
+            and ("路口内" in compact or "2.5" in raw or "关联的边线" in compact)):
+        # 先找边线ID数字，再向前匹配"错误"
+        seg = re.search(r"关联的边线\s*id?\s*([^错]+?)错误", compact, re.IGNORECASE)
+        if not seg:
+            seg = re.search(r"(?:ID)?[：:\s]*([\d,，；]*)\s*错误", compact, re.IGNORECASE)
+        if not seg:
+            seg = re.search(r"([\d,，；]+)错误", compact)
+        mark_ids = _digits_from_segment(seg.group(1) if seg else compact)
+        if link_id and mark_ids:
+            # "左右侧位错误" → 从左右两侧都 remove
+            if "左右侧位错误" in compact:
+                return [
+                    LaneFixAction(
+                        "remove", "RBDY_L", "ROAD_ID", link_id, mark_ids, raw,
+                        note="BDYID左右侧位错误-删左侧",
+                    ),
+                    LaneFixAction(
+                        "remove", "RBDY_R", "ROAD_ID", link_id, mark_ids, raw,
+                        note="BDYID左右侧位错误-删右侧",
+                    ),
+                ]
+            side = "RBDY_R" if re.search(r"右侧|右侧bdyid_r", compact_lower) else "RBDY_L"
+            return [
+                LaneFixAction(
+                    "remove", side, "ROAD_ID", link_id, mark_ids, raw,
+                    note="BDYID错误关联删除",
+                )
+            ]
+
+    # 2.6 路口内 ROAD_LINK BDYID_L/R 缺失边线
+    if ("bdyid" in compact_lower and re.search(r"缺失.*?边线", compact)
+            and ("路口内" in compact or "2.6" in raw or "关联的边线" in compact)):
+        seg = re.search(r"缺失.*?边线[\uff1a:\s]*([\d,\uff0c\uff1b\s]+)", compact, re.IGNORECASE)
+        mark_ids = _digits_from_segment(seg.group(1) if seg else compact)
+        if link_id and mark_ids:
+            side = "RBDY_R" if re.search(r"右侧|右侧bdyid_r", compact_lower) else "RBDY_L"
+            return [
+                LaneFixAction(
+                    "add", side, "ROAD_ID", link_id, mark_ids, raw,
+                    note="BDYID缺失边线补上",
+                )
+            ]
 
     # 2.3 bdyid_l/r 为空 → 从对向车道 LEFT_RVS 的 BDY_LEFT 推断 RBDY_L
     if link_id and re.search(r"bdyid_[lr]是空的", compact, re.IGNORECASE):
-        if "bdyid_r" in compact.lower():
+        if re.search(r"bdyid_r", compact_lower):
             field = "RBDY_R"
         else:
             field = "RBDY_L"
@@ -174,9 +270,9 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
     if link_id and re.search(r"缺失了?边线", compact):
         seg = re.search(r"缺失了?边线[：:\s]*(.+)", compact)
         mark_ids = _digits_from_segment(seg.group(1) if seg else compact)
-        if "bdyid_r" in compact.lower() or "右侧" in compact:
+        if re.search(r"右侧|右侧bdyid_r", compact_lower):
             field = "RBDY_R"
-        elif "bdyid_l" in compact.lower() or "左侧" in compact:
+        elif re.search(r"左侧|左侧bdyid_l", compact_lower):
             field = "RBDY_L"
         else:
             field = "RBDY_R" if "右侧" in compact else "RBDY_L"
@@ -188,7 +284,7 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
                 )
             ]
 
-    # 2.5 左右侧位错误（多个边线 ID 一次移动）
+    # 2.5 左右侧位错误（多个边线 ID 一次移动）- LANE 层 BDY_LEFT/BDY_RIGHT
     if link_id and "左右侧位错误" in compact:
         seg = re.search(
             r"关联的边线\s*id?\s*([^左右]+?)左右侧位错误",
@@ -197,40 +293,42 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
         )
         mark_ids = _digits_from_segment(seg.group(1) if seg else compact)
         if mark_ids:
-            if "bdyid_l" in compact.lower() or "左侧" in compact:
+            if re.search(r"左侧|左侧bdyid_l", compact_lower):
                 return [
                     LaneFixAction(
-                        "move", "RBDY_L", "ROAD_ID", link_id, mark_ids, raw,
-                        target_field_to="RBDY_R",
+                        "move", "BDY_LEFT", "ROAD_ID", link_id, mark_ids, raw,
+                        target_field_to="BDY_RIGHT",
                         note=f"左右侧位：{len(mark_ids)} 个 ID 左→右",
+                        layer="LANE",
                     )
                 ]
-            if "bdyid_r" in compact.lower() or "右侧" in compact:
+            if re.search(r"右侧|右侧bdyid_r", compact_lower):
                 return [
                     LaneFixAction(
-                        "move", "RBDY_R", "ROAD_ID", link_id, mark_ids, raw,
-                        target_field_to="RBDY_L",
+                        "move", "BDY_RIGHT", "ROAD_ID", link_id, mark_ids, raw,
+                        target_field_to="BDY_LEFT",
                         note=f"左右侧位：{len(mark_ids)} 个 ID 右→左",
+                        layer="LANE",
                     )
                 ]
 
-    # 2.5/2.2 关联错误（非侧位错误）→ 从对应侧删除
+    # 2.5/2.2 关联错误（非侧位错误）→ 从对应侧删除(LANE层)
     if link_id and "关联的边线" in compact and "错误" in compact and "左右侧位错误" not in compact:
         seg = re.search(r"关联的边线\s*id?\s*([^错]+?)错误", compact, re.IGNORECASE)
         mark_ids = _digits_from_segment(seg.group(1) if seg else compact)
         if mark_ids:
-            if "bdyid_r" in compact.lower() or "右侧" in compact:
+            if re.search(r"右侧|右侧bdyid_r", compact_lower):
                 return [
                     LaneFixAction(
-                        "remove", "RBDY_R", "ROAD_ID", link_id, mark_ids, raw,
-                        note="删除错误关联", layer="LANE",
+                        "remove", "BDY_RIGHT", "ROAD_ID", link_id, mark_ids, raw,
+                        note="删除错误关联(LANE)", layer="LANE",
                     )
                 ]
-            if "bdyid_l" in compact.lower() or "左侧" in compact:
+            if re.search(r"左侧|左侧bdyid_l", compact_lower):
                 return [
                     LaneFixAction(
-                        "remove", "RBDY_L", "ROAD_ID", link_id, mark_ids, raw,
-                        note="删除错误关联", layer="LANE",
+                        "remove", "BDY_LEFT", "ROAD_ID", link_id, mark_ids, raw,
+                        note="删除错误关联(LANE)", layer="LANE",
                     )
                 ]
 
@@ -242,7 +340,7 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
             re.IGNORECASE,
         )
         mark_ids = _digits_from_segment(seg.group(1) if seg else compact)
-        if mark_ids and ("lmark_l" in compact.lower() or "左侧" in compact):
+        if mark_ids and (re.search(r"lmark_l|左侧", compact_lower)):
             return [
                 LaneFixAction(
                     "move", "BDY_LEFT", "ID", lane_id, mark_ids, raw,
@@ -259,9 +357,9 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
         )
         mark_ids = _digits_from_segment(seg.group(1) if seg else compact)
         if mark_ids:
-            if "bdyid_l" in compact.lower() or "左侧" in compact:
+            if re.search(r"左侧|左侧bdyid_l", compact_lower):
                 field = "RBDY_L"
-            elif "bdyid_r" in compact.lower() or "右侧" in compact:
+            elif re.search(r"右侧|右侧bdyid_r", compact_lower):
                 field = "RBDY_R"
             else:
                 field = "RBDY_L"
@@ -269,51 +367,6 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
                 LaneFixAction(
                     "remove", field, "ROAD_ID", link_id, mark_ids, raw,
                     note="不应记录边线",
-                )
-            ]
-
-    # 2.5 路口内 ROAD_LINK BDYID_L/R 关联错误
-    # 错误格式：linkid:4208007，左侧bdyid_l，关联的边线ID4208491错误
-    # "错误"出现在边线ID数字之后，所以先找ID数字，再向前找"错误"
-    if ("bdyid" in compact.lower() and "错误" in compact
-            and ("路口内" in compact or "2.5" in raw)):
-        # 先找边线ID数字，再向前匹配"错误"
-        seg = re.search(r"(?:ID)?[：:\s]*([\d,，；]*)\s*错误", compact, re.IGNORECASE)
-        if not seg:
-            seg = re.search(r"([\d,，；]+)错误", compact)
-        mark_ids = _digits_from_segment(seg.group(1) if seg else compact)
-        if link_id and mark_ids:
-            # "左右侧位错误" → 从左右两侧都 remove
-            if "左右侧位错误" in compact:
-                return [
-                    LaneFixAction(
-                        "remove", "RBDY_L", "ROAD_ID", link_id, mark_ids, raw,
-                        note="BDYID左右侧位错误-删左侧(ROAD)", layer="ROAD_LINK",
-                    ),
-                    LaneFixAction(
-                        "remove", "RBDY_R", "ROAD_ID", link_id, mark_ids, raw,
-                        note="BDYID左右侧位错误-删右侧(ROAD)", layer="ROAD_LINK",
-                    ),
-                ]
-            side = "RBDY_R" if "bdyid_r" in compact.lower() or "右侧" in compact else "RBDY_L"
-            return [
-                LaneFixAction(
-                    "remove", side, "ROAD_ID", link_id, mark_ids, raw,
-                    note="BDYID错误关联删除(ROAD)", layer="ROAD_LINK",
-                )
-            ]
-
-    # 2.6 路口内 ROAD_LINK BDYID_L/R 缺失边线
-    if ("bdyid" in compact.lower() and re.search(r"缺失.*?边线", compact)
-            and ("路口内" in compact or "2.6" in raw)):
-        seg = re.search(r"缺失.*?边线[\uff1a:\s]*([\d,\uff0c\uff1b\s]+)", compact, re.IGNORECASE)
-        mark_ids = _digits_from_segment(seg.group(1) if seg else compact)
-        if link_id and mark_ids:
-            side = "RBDY_R" if "bdyid_r" in compact.lower() or "右侧" in compact else "RBDY_L"
-            return [
-                LaneFixAction(
-                    "add", side, "ROAD_ID", link_id, mark_ids, raw,
-                    note="BDYID缺失边线补上(ROAD)", layer="ROAD_LINK",
                 )
             ]
 

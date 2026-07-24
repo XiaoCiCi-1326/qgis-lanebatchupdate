@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-车道批量刷值工具 - 对齐 UpdateShpLane v1.0.1.3
+车道批量刷值工具 v1.0.4.26
 规则来源：更新日志.txt / UpdateShpLane.exe
 
 按钮：
