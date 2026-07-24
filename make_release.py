@@ -8,6 +8,8 @@ from pathlib import Path
 
 PLUGIN_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = PLUGIN_DIR.parent
+BACKUP_DIR = PROJECT_ROOT / "备份"
+BACKUP_EXCLUDE = {".git", "__pycache__"}
 
 RELEASE_FILES = (
     "__init__.py",
@@ -80,7 +82,35 @@ def read_version():
     return "unknown"
 
 
+def backup_current_version():
+    """备份当前版本到 备份 目录"""
+    version = read_version()
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_name = f"lanebatchupdate_v{version}_{stamp}"
+    backup_path = BACKUP_DIR / backup_name
+
+    if not BACKUP_DIR.exists():
+        BACKUP_DIR.mkdir(parents=True)
+
+    shutil.copytree(
+        PLUGIN_DIR,
+        backup_path,
+        ignore=shutil.ignore_patterns(*BACKUP_EXCLUDE),
+        dirs_exist_ok=False
+    )
+    print(f"备份已创建: {backup_path}")
+    return backup_path
+
+
 def main():
+    print("=" * 50)
+    print("开始发布流程...")
+    print("=" * 50)
+
+    print("\n[1/3] 备份当前版本...")
+    backup_path = backup_current_version()
+
+    print("\n[2/3] 打包发布文件...")
     version = read_version()
     stamp = datetime.now().strftime("%Y%m%d")
     out_name = f"lanebatchupdate_v{version}_{stamp}"
@@ -113,6 +143,8 @@ def main():
     if missing:
         raise SystemExit(f"缺少文件: {missing}")
 
+    print(f"\n[3/3] 创建 ZIP 包...")
+
     if zip_path.exists():
         zip_path.unlink()
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -122,6 +154,10 @@ def main():
                 arc = full.relative_to(release_dir.parent)
                 zf.write(full, arc.as_posix())
 
+    print("\n" + "=" * 50)
+    print("发布完成！")
+    print("=" * 50)
+    print(f"备份: {backup_path}")
     print(f"发布文件夹: {release_dir}")
     print(f"ZIP 包: {zip_path}")
     print(f"版本: {version}")
