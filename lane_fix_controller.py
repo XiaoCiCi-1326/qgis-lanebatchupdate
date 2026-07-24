@@ -166,7 +166,7 @@ class LaneFixController:
 
                     "· LINKID= 格式 2.2/2.3 不应记录与缺失边线\n"
 
-                    "· BDYID_L/R 为空：从对向车道 LEFT_RVS 推断 RBDY\n"
+                    "· BDYID_L/R 为空：五级递进补全（RVS对向→FWD同向→BDY兜底）\n"
 
                     "· 路口 lane BDYID 错误关联/缺失（ROAD_LINK 层）\n"
 

@@ -208,19 +208,19 @@ class LaneFixEngine:
 
     def _fill_empty_rbdy_from_lrvs(self, road_id: str, logical_rbdy: str) -> int:
         """
-        RBDY_L/R 为空时推断补全（Excel边线改错使用），策略：
+        RBDY_L/R 为空时推断补全（Excel边线改错使用），五级递进策略：
         - RBDY_L:
-          1. 从本车道 LEFT_RVS 获取对向车道ID → 取其 RBDY_R
-          2. 从本车道 RIGHT_RVS 获取对向车道ID → 取其 RBDY_R
-          3. 从本车道 LEFT_FWD 获取同向车道ID → 取其 RBDY_L
-          4. 从本车道 RIGHT_FWD 获取同向车道ID → 取其 RBDY_L
-          5. 最后用本车道 BDY_LEFT
+          1. LEFT_RVS → 对向车道 RBDY_R
+          2. RIGHT_RVS → 对向车道 RBDY_R
+          3. LEFT_FWD → 同向车道 RBDY_L
+          4. RIGHT_FWD → 同向车道 RBDY_L
+          5. 本车道 BDY_LEFT 兜底
         - RBDY_R:
-          1. 从本车道 RIGHT_RVS 获取对向车道ID → 取其 RBDY_L
-          2. 从本车道 LEFT_RVS 获取对向车道ID → 取其 RBDY_L
-          3. 从本车道 RIGHT_FWD 获取同向车道ID → 取其 RBDY_R
-          4. 从本车道 LEFT_FWD 获取同向车道ID → 取其 RBDY_R
-          5. 最后用本车道 BDY_RIGHT
+          1. RIGHT_RVS → 对向车道 RBDY_L
+          2. LEFT_RVS → 对向车道 RBDY_L
+          3. RIGHT_FWD → 同向车道 RBDY_R
+          4. LEFT_FWD → 同向车道 RBDY_R
+          5. 本车道 BDY_RIGHT 兜底
         """
         if logical_rbdy == "RBDY_L":
             strategies = [
@@ -389,19 +389,19 @@ class LaneFixEngine:
         对单个 feature 尝试填充指定 RBDY 字段。
         返回 (filled: bool, method: str)  filled=True 时 feat 已被修改。
 
-        推断策略：
+        五级递进策略：
         - RBDY_L:
-          1. 从本车道 LEFT_RVS 获取对向车道ID → 取其 RBDY_R
-          2. 从本车道 RIGHT_RVS 获取对向车道ID → 取其 RBDY_R
-          3. 从本车道 LEFT_FWD 获取同向车道ID → 取其 RBDY_L
-          4. 从本车道 RIGHT_FWD 获取同向车道ID → 取其 RBDY_L
-          5. 最后用本车道 BDY_LEFT
+          1. LEFT_RVS → 对向车道 RBDY_R
+          2. RIGHT_RVS → 对向车道 RBDY_R
+          3. LEFT_FWD → 同向车道 RBDY_L
+          4. RIGHT_FWD → 同向车道 RBDY_L
+          5. 本车道 BDY_LEFT 兜底
         - RBDY_R:
-          1. 从本车道 RIGHT_RVS 获取对向车道ID → 取其 RBDY_L
-          2. 从本车道 LEFT_RVS 获取对向车道ID → 取其 RBDY_L
-          3. 从本车道 RIGHT_FWD 获取同向车道ID → 取其 RBDY_R
-          4. 从本车道 LEFT_FWD 获取同向车道ID → 取其 RBDY_R
-          5. 最后用本车道 BDY_RIGHT
+          1. RIGHT_RVS → 对向车道 RBDY_L
+          2. LEFT_RVS → 对向车道 RBDY_L
+          3. RIGHT_FWD → 同向车道 RBDY_R
+          4. LEFT_FWD → 同向车道 RBDY_R
+          5. 本车道 BDY_RIGHT 兜底
         """
         # 策略 1~4：对向/同向车道推断
         if logical_rbdy == "RBDY_L":

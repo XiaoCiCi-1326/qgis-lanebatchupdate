@@ -253,7 +253,7 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
                 )
             ]
 
-    # 2.3 bdyid_l/r 为空 → 从对向车道 LEFT_RVS 的 BDY_LEFT 推断 RBDY_L
+    # 2.3 bdyid_l/r 为空 → 五级递进策略补全 RBDY_L/RBDY_R（见 lane_fix_engine.py）
     if link_id and re.search(r"bdyid_[lr]是空的", compact, re.IGNORECASE):
         if re.search(r"bdyid_r", compact_lower):
             field = "RBDY_R"
@@ -262,7 +262,7 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
         return [
             LaneFixAction(
                 "fill_from_lrvs", field, "ROAD_ID", link_id, [], raw,
-                note="RBDY 为空，从对向车道 LEFT_RVS/BDY_LEFT 推断",
+                note="RBDY 为空，五级递进策略补全（RVS对向→FWD同向→BDY兜底）",
             )
         ]
 
