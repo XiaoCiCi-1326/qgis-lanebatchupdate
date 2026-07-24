@@ -22,6 +22,7 @@ RELEASE_FILES = (
     "icon_reconstruct_prep.png",
     "icon_reconstruct_full.png",
     "icon_reconstruct_open.png",
+    "icon_fill_rbdy.png",
     "icon_lane_fix.png",
     "lane_fix_excel.py",
     "lane_fix_engine.py",
