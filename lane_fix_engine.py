@@ -35,9 +35,10 @@ _SIGNAL_FIELD_ALIASES = {
 class LaneFixEngine:
     """对齐 ProcessShpFiles：按 Excel 错误表批量改 LANE 边线字段。"""
 
-    def __init__(self, lane_layer: QgsVectorLayer, log_fn: Callable):
+    def __init__(self, lane_layer: QgsVectorLayer, log_fn: Callable, dry_run: bool = False):
         self.lane_layer = lane_layer
         self.log = log_fn
+        self.dry_run = dry_run
         self.field_map = self._build_field_map(lane_layer)
         self.lane_by_id: Dict[str, int] = {}
         self.lane_by_road: Dict[str, List[int]] = {}
@@ -249,7 +250,7 @@ class LaneFixEngine:
             self.log(f"[fill_from_lrvs] 跳过：未找到 ROAD_ID={road_id} 的车道", show_bar=False)
             return 0
 
-        if not self.lane_layer.startEditing():
+        if not self.lane_layer.isEditable() and not self.lane_layer.startEditing():
             self.log(f"[fill_from_lrvs] 跳过：无法开启图层编辑", show_bar=False)
             return 0
         updated = 0
@@ -315,13 +316,41 @@ class LaneFixEngine:
                             self.log(f"  [lane {lane_id}] 无法填充：{own_bdy} 也为空", show_bar=False)
                     else:
                         self.log(f"  [lane {lane_id}] 无法填充：字段 {own_bdy_field} 不存在", show_bar=False)
-                elif not filled:
-                    self.log(f"  [lane {lane_id}] 无法填充：所有策略都失败（5条路都走不通）", show_bar=False)
 
-            if not self.lane_layer.commitChanges():
+                # 策略 6：同 link 上其他车道 RBDY 复用
+                # 一条 link 共享同一组边线 ID，任意车道有 RBDY 值时其他车道可复用
+                if not filled:
+                    for other_fid in feat_ids:
+                        if other_fid == fid:
+                            continue
+                        other_feat = self.lane_layer.getFeature(other_fid)
+                        other_val = other_feat[rbdy_field]
+                        if not self.is_empty(other_val):
+                            feat[rbdy_field] = other_val
+                            self.lane_layer.updateFeature(feat)
+                            updated += 1
+                            self.log(
+                                f"[lane {lane_id}] {logical_rbdy}={other_val} "
+                                f"(←同link {lane_id}→{self.norm_id(other_feat['ID'])} RBDY 复用)",
+                                show_bar=False,
+                            )
+                            filled = True
+                            break
+                    if not filled:
+                        self.log(
+                            f"  [lane {lane_id}] 无法填充：策略 1~6 全失败（同 link 上无有效 RBDY）",
+                            show_bar=False,
+                        )
+                elif not filled:
+                    self.log(
+                        f"  [lane {lane_id}] 无法填充：策略 1~4 全失败，BDY 也为空",
+                        show_bar=False,
+                    )
+
+            # 注意：不在此处 commit，由外层 apply_actions 统一保存，
+            # 避免嵌套编辑会话重复提交导致 commitChanges 报"图层不可编辑"。
+            if self.dry_run:
                 self.lane_layer.rollBack()
-                self.log(f"[fill_from_lrvs] 保存失败", show_bar=False)
-                return 0
         except Exception as e:
             self.lane_layer.rollBack()
             self.log(f"[fill_from_lrvs] 异常: {e}", show_bar=False)
@@ -450,6 +479,23 @@ class LaneFixEngine:
             if not self.is_empty(bdy_val):
                 feat[rbdy_f] = bdy_val
                 return True, "fallback"
+
+        # 策略 6：同 link 上其他车道 RBDY 复用
+        # 同 link 上多条车道共享同一组边线 ID，任意车道有 RBDY 值即可复用
+        road_id = self.norm_id(feat[self.field_map.get("ROAD_ID")]) if self.field_map.get("ROAD_ID") else None
+        if road_id:
+            other_fids = self.lane_by_road.get(road_id, [])
+            fid_self = feat.id()
+            for other_fid in other_fids:
+                if other_fid == fid_self:
+                    continue
+                other_feat = self.lane_layer.getFeature(other_fid)
+                if not other_feat.isValid():
+                    continue
+                other_val = other_feat[rbdy_f]
+                if not self.is_empty(other_val):
+                    feat[rbdy_f] = other_val
+                    return True, "link_share"
 
         return False, ""
 
@@ -617,10 +663,16 @@ class LaneFixEngine:
                     )
 
             if not was_editing:
-                if not self.lane_layer.commitChanges():
+                if self.dry_run:
+                    self.lane_layer.rollBack()
+                    self.log("[dry-run] 已回滚，未写盘", show_bar=False)
+                elif not self.lane_layer.commitChanges():
                     errors = "; ".join(self.lane_layer.commitErrors())
                     self.lane_layer.rollBack()
                     raise RuntimeError(f"LANE 保存失败: {errors}")
+            else:
+                # 外部已开启编辑模式：不要替用户 commit/rollback，保留其会话
+                pass
         except Exception:
             if not was_editing:
                 self.lane_layer.rollBack()
@@ -715,9 +767,10 @@ class GenericLayerFixer:
     支持 ROAD_LINK（BDYID_L/R）、SIGNAL（LANES）等图层。
     """
 
-    def __init__(self, layer, log_fn: Callable):
+    def __init__(self, layer, log_fn: Callable, dry_run: bool = False):
         self.layer = layer
         self.log = log_fn
+        self.dry_run = dry_run
         self.field_map: Dict[str, str] = {}
         if layer:
             self._build_field_map()
@@ -813,7 +866,9 @@ class GenericLayerFixer:
                     stats["skipped"] += 1
 
             if not was_editing:
-                if not self.layer.commitChanges():
+                if self.dry_run:
+                    self.layer.rollBack()
+                elif not self.layer.commitChanges():
                     errors = "; ".join(self.layer.commitErrors())
                     self.layer.rollBack()
                     self.log(f"GenericLayerFixer 保存失败: {errors}", level="ERROR")

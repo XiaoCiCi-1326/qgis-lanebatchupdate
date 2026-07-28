@@ -1,5 +1,15 @@
 # 更新日志
 
+## v1.0.4.28
+- 新增「预览后修复」按钮：解析 Excel 后弹出错误清单对话框，可勾选 / 全选 / 反选 / 按字段过滤
+- **默认写盘**：点击「一键修复」即直接执行，无需预览 / 二次确认
+- LaneFixEngine / GenericLayerFixer 新增 dry_run 参数：commitChanges 自动转为 rollBack
+- 改动完成后在 log/ 写入改动报告 csv（含 Excel 行号、图层、动作、目标字段、边线 ID 等）
+- 修复「步骤 8、9」进度条关闭 dialog 后残留卡死的 bug：补 show/setAutoClose/try-finally close+deleteLater
+- 修复 `fill_from_lrvs` 在已编辑图层上 startEditing 失败导致无法补 RBDY 的 bug：先检查 isEditable()
+- 对话框新增「只选可修复」按钮：一键勾选所有 action != skip 的行；表格支持 Shift/Ctrl 框选联动勾选
+- 旧按钮「Excel 边线改错」保留不动，向后兼容
+
 ## v1.0.4.25
 - 修复 swap/add/remove/move 所有操作写盘失败：`updateFeature` 替换为 `changeAttributeValue`（shapefile 不支持 updateFeature 写盘，`commitChanges` 后数据不变）
 - `_apply_field_move` 改为返回改动字段 dict，由 apply_actions 统一调用 `changeAttributeValue`
