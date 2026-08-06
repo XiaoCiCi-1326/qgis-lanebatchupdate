@@ -7,6 +7,7 @@
   限速刷值       → 规则 1.1~1.6（与原始软件一致）
   ROAD_TYPE=2    → 将 LANE 图层全部要素的 ROAD_TYPE 字段设为 2
   转向个数刷值   → VIRTUAL 规则 2.1~2.2
+  移除所有图层   → 从当前 QGIS 工程中移除全部图层
 """
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction, QMessageBox
@@ -25,6 +26,7 @@ class LaneBatchUpdateTool:
     MODE_SPEED = "speed"
     MODE_SET_ROAD2 = "set_road2"
     MODE_VIRTUAL = "virtual"
+    MODE_REMOVE_ALL = "remove_all"
 
     def __init__(self, iface):
         self.iface = iface
@@ -42,6 +44,7 @@ class LaneBatchUpdateTool:
             (self.MODE_SPEED, "限速刷值", "icon_speed.png"),
             (self.MODE_SET_ROAD2, "ROAD_TYPE=2", "icon_road2.png"),
             (self.MODE_VIRTUAL, "转向个数刷值", "icon_virtual.png"),
+            (self.MODE_REMOVE_ALL, "移除所有图层", "icon_remove_layers.svg"),
         )
         for mode, label, icon_name in buttons:
             icon_path = os.path.join(self.plugin_dir, icon_name)
@@ -856,7 +859,32 @@ class LaneBatchUpdateTool:
             lane_layer.rollBack()
             raise RuntimeError("\n".join(errors))
 
+    def remove_all_layers(self):
+        project = QgsProject.instance()
+        layer_count = len(project.mapLayers())
+        if layer_count == 0:
+            QMessageBox.information(None, "移除所有图层", "当前工程没有已加载图层。")
+            return
+
+        answer = QMessageBox.question(
+            self.iface.mainWindow(),
+            "确认移除所有图层",
+            f"确定要从当前工程移除全部 {layer_count} 个图层吗？\n\n此操作不会删除磁盘上的源数据文件。",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+
+        project.removeAllMapLayers()
+        self.log(f"已从当前工程移除全部 {layer_count} 个图层")
+        QMessageBox.information(None, "操作完成", f"已移除 {layer_count} 个图层。\n源数据文件未删除。")
+
     def run(self, mode):
+        if mode == self.MODE_REMOVE_ALL:
+            self.remove_all_layers()
+            return
+
         self.begin_run()
 
         try:
