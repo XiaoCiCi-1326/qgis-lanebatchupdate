@@ -33,10 +33,10 @@ class ReconstructController:
 
     def initGui(self, actions_master):
         buttons = (
-            (self.MODE_PREP, "准备三份数据", "icon_reconstruct_prep.png", "run"),
-            (self.MODE_FULL, "一键重构(全程)", "icon_reconstruct_full.png", "run"),
+            (self.MODE_PREP, "准备三份数据", "icon_prepare_data.svg", "run"),
+            (self.MODE_FULL, "一键重构(全程)", "icon_rebuild_all.svg", "run"),
             (self.MODE_FILL_RBDY, "全量补空RBDY", "icon_fill_rbdy.png", "fill_rbdy"),
-            (self.MODE_OPEN_ORIG, "打开原始文件", "icon_reconstruct_open.png", "open"),
+            (self.MODE_OPEN_ORIG, "打开原始文件", "icon_open_original.svg", "open"),
         )
         for mode, label, icon_name, action_type in buttons:
             icon_path = os.path.join(self.plugin_dir, icon_name)
