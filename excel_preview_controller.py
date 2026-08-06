@@ -119,7 +119,7 @@ class ExcelPreviewController:
                     c
                     for c in cells
                     if re.search(
-                        r"linkid|laneid|left_rvs|lmark_[lr]|缺失|错误|不应记录|顺序不对",
+                        r"linkid|laneid|left_rvs|lmark_[lr]|缺失|错误|不应记录|顺序不对|需补充",
                         c,
                         re.I,
                     )
@@ -378,7 +378,7 @@ class ExcelPreviewController:
                             a.target_field_to,
                             a.match_field,
                             a.match_value,
-                            ";".join(a.mark_ids),
+                            "|".join(a.mark_ids),
                             a.note or "",
                             "[预览] OK" if dry_run else "OK",
                         ]

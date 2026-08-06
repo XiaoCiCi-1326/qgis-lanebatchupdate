@@ -530,11 +530,12 @@ class LaneFixEngine:
 
                 target_field = self._resolve_actual_field(action.target_field)
                 target_field_to = self._resolve_actual_field(action.target_field_to)
-                if action.action == "move":
+                if action.action in ("move", "copy"):
                     if not target_field or not target_field_to:
                         stats["skipped"] += 1
                         self.log(
-                            f"跳过(move 缺字段): {action.target_field}->{action.target_field_to}",
+                            f"跳过({action.action} 缺字段): "
+                            f"{action.target_field}->{action.target_field_to}",
                             show_bar=False,
                         )
                         continue
@@ -543,7 +544,7 @@ class LaneFixEngine:
                     self.log(f"跳过(无字段): {action.target_field}", show_bar=False)
                     continue
 
-                if not action.mark_ids and action.action not in ("skip", "fill_from_lrvs"):
+                if not action.mark_ids and action.action not in ("skip", "copy", "fill_from_lrvs"):
                     stats["skipped"] += 1
                     self.log(f"跳过(无边线ID): {action.source_text[:80]}", show_bar=False)
                     continue
@@ -580,13 +581,31 @@ class LaneFixEngine:
                         continue
                     new_val = None
                     changed = False
+                    if action.action == "copy":
+                        source_val = feat[target_field]
+                        if not self.is_empty(source_val) and feat[target_field_to] != source_val:
+                            feat[target_field_to] = source_val
+                            self.lane_layer.changeAttributeValue(
+                                fid, feat.fieldNameIndex(target_field_to), source_val
+                            )
+                            touched.add(fid)
+                            stats["applied"] += 1
+                            self.log(
+                                f"laneid={action.match_value} {action.target_field}"
+                                f"->{action.target_field_to} copy OK",
+                                show_bar=False,
+                            )
+                        else:
+                            stats["skipped"] += 1
+                            self.log(
+                                f"跳过(copy源为空或无变化): lane={action.match_value} "
+                                f"{action.target_field}->{action.target_field_to}",
+                                show_bar=False,
+                            )
+                        continue
                     if action.action == "add":
-                        prepend = (
-                            action.target_field == "LEFT_RVS"
-                            and "互挂" in (action.note or "")
-                        )
                         new_val, changed = self._add_ids(
-                            feat[target_field], action.mark_ids, prepend=prepend
+                            feat[target_field], action.mark_ids, prepend=False
                         )
                         if changed:
                             feat[target_field] = new_val if new_val else None
@@ -931,7 +950,7 @@ class GenericLayerFixer:
         if not added:
             return str(existing) if existing else "", False
         merged = (added + existing_list) if prepend else (existing_list + added)
-        return ";".join(merged), True
+        return "|".join(merged), True
 
     @staticmethod
     def _remove_ids(existing, to_remove: List[str]) -> Tuple[str, bool]:
@@ -940,5 +959,5 @@ class GenericLayerFixer:
         new_list = [x for x in existing_list if x not in remove_set]
         if new_list == existing_list:
             return str(existing) if existing else "", False
-        return ";".join(new_list), True
+        return "|".join(new_list), True
 
