@@ -21,6 +21,8 @@ from .lane_fix_controller import LaneFixController
 from .excel_preview_controller import ExcelPreviewController
 from .reconstruct_controller import ReconstructController
 from .inertial_follow_controller import InertialFollowController
+from .map_tile_snap_controller import MapTileSnapController
+from .lane_boundary_join_controller import LaneBoundaryJoinController
 
 
 class LaneBatchUpdateTool:
@@ -40,6 +42,8 @@ class LaneBatchUpdateTool:
         self.lane_fix = LaneFixController(iface, self.plugin_dir, self.log)
         self.excel_preview = ExcelPreviewController(iface, self.plugin_dir, self.log)
         self.inertial_follow = InertialFollowController(iface, self.plugin_dir)
+        self.map_tile_snap = MapTileSnapController(iface, self.plugin_dir)
+        self.lane_boundary_join = LaneBoundaryJoinController(iface, self.plugin_dir)
 
     def initGui(self):
         buttons = (
@@ -59,6 +63,8 @@ class LaneBatchUpdateTool:
         self.lane_fix.initGui(self.actions)
         self.excel_preview.initGui(self.actions)
         self.inertial_follow.initGui(self.actions)
+        self.map_tile_snap.initGui(self.actions)
+        self.lane_boundary_join.initGui(self.actions)
 
     def unload(self):
         for action in self.actions:
@@ -69,6 +75,8 @@ class LaneBatchUpdateTool:
         self.lane_fix.unload()
         self.excel_preview.unload()
         self.inertial_follow.unload()
+        self.map_tile_snap.unload()
+        self.lane_boundary_join.unload()
 
     @staticmethod
     def is_empty(value):
