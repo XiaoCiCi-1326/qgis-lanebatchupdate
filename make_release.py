@@ -14,6 +14,7 @@ BACKUP_EXCLUDE = {".git", "__pycache__"}
 RELEASE_FILES = (
     "__init__.py",
     "lanebatchupdate.py",
+    "inertial_follow_controller.py",
     "metadata.txt",
     "icon.png",
     "icon_speed.png",
@@ -25,6 +26,7 @@ RELEASE_FILES = (
     "icon_open_original.svg",
     "icon_fill_rbdy.png",
     "icon_remove_layers.svg",
+    "icon_inertial_follow.svg",
     "lane_fix_excel.py",
     "lane_fix_engine.py",
     "lane_fix_controller.py",

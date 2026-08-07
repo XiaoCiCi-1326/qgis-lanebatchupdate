@@ -20,6 +20,7 @@ import re
 from .lane_fix_controller import LaneFixController
 from .excel_preview_controller import ExcelPreviewController
 from .reconstruct_controller import ReconstructController
+from .inertial_follow_controller import InertialFollowController
 
 
 class LaneBatchUpdateTool:
@@ -38,6 +39,7 @@ class LaneBatchUpdateTool:
         self.reconstruct = ReconstructController(iface, self.plugin_dir, self.log)
         self.lane_fix = LaneFixController(iface, self.plugin_dir, self.log)
         self.excel_preview = ExcelPreviewController(iface, self.plugin_dir, self.log)
+        self.inertial_follow = InertialFollowController(iface, self.plugin_dir)
 
     def initGui(self):
         buttons = (
@@ -56,6 +58,7 @@ class LaneBatchUpdateTool:
         self.reconstruct.initGui(self.actions)
         self.lane_fix.initGui(self.actions)
         self.excel_preview.initGui(self.actions)
+        self.inertial_follow.initGui(self.actions)
 
     def unload(self):
         for action in self.actions:
@@ -65,6 +68,7 @@ class LaneBatchUpdateTool:
         self.reconstruct.unload()
         self.lane_fix.unload()
         self.excel_preview.unload()
+        self.inertial_follow.unload()
 
     @staticmethod
     def is_empty(value):
