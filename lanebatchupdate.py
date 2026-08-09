@@ -23,6 +23,7 @@ from .reconstruct_controller import ReconstructController
 from .inertial_follow_controller import InertialFollowController
 from .map_tile_snap_controller import MapTileSnapController
 from .lane_boundary_join_controller import LaneBoundaryJoinController
+from .attribute_preset_controller import AttributePresetController
 
 
 class LaneBatchUpdateTool:
@@ -44,6 +45,7 @@ class LaneBatchUpdateTool:
         self.inertial_follow = InertialFollowController(iface, self.plugin_dir)
         self.map_tile_snap = MapTileSnapController(iface, self.plugin_dir)
         self.lane_boundary_join = LaneBoundaryJoinController(iface, self.plugin_dir)
+        self.attribute_preset = AttributePresetController(iface, self.plugin_dir)
 
     def initGui(self):
         buttons = (
@@ -65,6 +67,7 @@ class LaneBatchUpdateTool:
         self.inertial_follow.initGui(self.actions)
         self.map_tile_snap.initGui(self.actions)
         self.lane_boundary_join.initGui(self.actions)
+        self.attribute_preset.initGui(self.actions)
 
     def unload(self):
         for action in self.actions:
@@ -77,6 +80,7 @@ class LaneBatchUpdateTool:
         self.inertial_follow.unload()
         self.map_tile_snap.unload()
         self.lane_boundary_join.unload()
+        self.attribute_preset.unload()
 
     @staticmethod
     def is_empty(value):

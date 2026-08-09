@@ -11,7 +11,10 @@ os.chdir(ROOT)
 
 def run(cmd, check=True):
     print(f"\n>>> {cmd}")
-    result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    result = subprocess.run(
+        cmd, shell=True, capture_output=True, text=True,
+        encoding="utf-8", errors="replace",
+    )
     if result.stdout:
         print(result.stdout)
     if result.stderr:
