@@ -1,20 +1,19 @@
 # -*- coding: utf-8 -*-
 """按图层保存并应用属性预设。"""
+import ast
 import json
 
-from qgis.PyQt.QtCore import QSettings, Qt
-from qgis.PyQt.QtGui import QIcon
+from qgis.PyQt.QtCore import QMimeData, QSettings, Qt, pyqtSignal
+from qgis.PyQt.QtGui import QDrag, QIcon
 from qgis.PyQt.QtWidgets import (
     QAction,
     QComboBox,
     QDialog,
-    QDialogButtonBox,
     QFormLayout,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QListWidget,
-    QListWidgetItem,
     QMessageBox,
     QPushButton,
     QTableWidget,
@@ -51,6 +50,56 @@ class AttributeBrushMapTool(QgsMapToolIdentifyFeature):
                 Qgis.Info,
                 duration=4,
             )
+
+
+class PresetButton(QPushButton):
+    doubleClicked = pyqtSignal()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_start = event.pos()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if (
+            event.buttons() & Qt.LeftButton
+            and (event.pos() - self._drag_start).manhattanLength() >= 12
+        ):
+            drag = QDrag(self)
+            mime = QMimeData()
+            mime.setText(self.text())
+            drag.setMimeData(mime)
+            drag.exec_(Qt.MoveAction)
+        super().mouseMoveEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        self.doubleClicked.emit()
+        super().mouseDoubleClickEvent(event)
+
+
+class PresetPanel(QWidget):
+    orderChanged = pyqtSignal(list)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        self.buttons = []
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasText():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        source = event.source()
+        if not isinstance(source, PresetButton) or source not in self.buttons:
+            event.ignore()
+            return
+        target = self.childAt(event.pos())
+        target_index = self.buttons.index(target) if target in self.buttons else len(self.buttons)
+        source_index = self.buttons.index(source)
+        self.buttons.insert(target_index, self.buttons.pop(source_index))
+        self.orderChanged.emit([button.text() for button in self.buttons])
+        event.acceptProposedAction()
 
 
 class AttributePresetDialog(QDialog):
@@ -90,12 +139,14 @@ class AttributePresetDialog(QDialog):
         preset_row.addWidget(self.delete_button)
         layout.addLayout(preset_row)
 
-        layout.addWidget(QLabel("已保存预设"))
-        self.preset_list = QListWidget()
-        self.preset_list.setMinimumHeight(96)
-        self.preset_list.setMaximumHeight(150)
-        self.preset_list.itemClicked.connect(self._preset_list_clicked)
-        layout.addWidget(self.preset_list)
+        layout.addWidget(QLabel("常用预设（单击加载，双击直接应用，可拖动排序）"))
+        self.preset_panel = PresetPanel()
+        self.preset_panel.orderChanged.connect(self._preset_order_changed)
+        self.preset_grid = QGridLayout(self.preset_panel)
+        self.preset_grid.setContentsMargins(0, 0, 0, 0)
+        self.preset_grid.setHorizontalSpacing(6)
+        self.preset_grid.setVerticalSpacing(6)
+        layout.addWidget(self.preset_panel)
 
         name_row = QHBoxLayout()
         name_row.addWidget(QLabel("名称"))
@@ -144,15 +195,25 @@ class AttributePresetDialog(QDialog):
         layout.addLayout(scope_row)
         layout.addWidget(QLabel("空白字段不会写入；修改保留在编辑状态，可用 Ctrl+Z 撤回。"))
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Close)
-        self.save_button = buttons.addButton("保存预设", QDialogButtonBox.ActionRole)
-        self.brush_button = buttons.addButton("格式刷", QDialogButtonBox.ActionRole)
-        self.apply_button = buttons.addButton("应用属性", QDialogButtonBox.AcceptRole)
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        self.save_button = QPushButton("保存预设")
+        self.brush_button = QPushButton("格式刷")
+        self.apply_button = QPushButton("应用属性")
+        self.apply_button.setDefault(True)
+        self.apply_button.setAutoDefault(True)
+        self.close_button = QPushButton("关闭")
+        for button in (self.save_button, self.brush_button, self.apply_button, self.close_button):
+            button.setAutoDefault(False)
         self.save_button.clicked.connect(self._save_preset)
         self.brush_button.clicked.connect(self._start_brush)
         self.apply_button.clicked.connect(self._apply_preset)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        self.close_button.clicked.connect(self.reject)
+        button_row.addWidget(self.save_button)
+        button_row.addWidget(self.apply_button)
+        button_row.addWidget(self.brush_button)
+        button_row.addWidget(self.close_button)
+        layout.addLayout(button_row)
 
     def _reload_layers(self, prefer_active=True):
         active_layer = self.iface.activeLayer()
@@ -207,18 +268,39 @@ class AttributePresetDialog(QDialog):
         self.preset_combo.addItems(preset_names)
         self.preset_combo.blockSignals(False)
 
-        self.preset_list.blockSignals(True)
-        self.preset_list.clear()
+        while self.preset_grid.count():
+            item = self.preset_grid.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+        preset_names = self.controller.ordered_preset_names(preset_key, preset_names)
+        self.preset_panel.buttons = []
         for name in preset_names:
             if name == self.controller.EMPTY_PRESET_NAME:
                 continue
-            self.preset_list.addItem(QListWidgetItem(name))
-        self.preset_list.blockSignals(False)
+            button = PresetButton(name, self.preset_panel)
+            button.setToolTip("单击加载预设；双击直接应用；拖动调整位置")
+            button.clicked.connect(lambda checked=False, n=name: self._select_preset(n))
+            button.doubleClicked.connect(lambda n=name: self._apply_named_preset(n))
+            self.preset_panel.buttons.append(button)
+        self._layout_preset_buttons()
 
-    def _preset_list_clicked(self, item):
-        index = self.preset_combo.findText(item.text())
+    def _layout_preset_buttons(self):
+        for index, button in enumerate(self.preset_panel.buttons):
+            self.preset_grid.addWidget(button, index // 5, index % 5)
+
+    def _preset_order_changed(self, names):
+        self._layout_preset_buttons()
+        self.controller.save_preset_order(self._preset_key(), names)
+
+    def _select_preset(self, name):
+        index = self.preset_combo.findText(name)
         if index >= 0:
             self.preset_combo.setCurrentIndex(index)
+
+    def _apply_named_preset(self, name):
+        self._select_preset(name)
+        self._apply_preset()
 
     def _clear_fields(self):
         while self.form.rowCount():
@@ -467,9 +549,47 @@ class AttributePresetDialog(QDialog):
 
 class AttributePresetController:
     SETTINGS_KEY = "LaneBatchUpdate/attribute_presets"
+    ORDER_SETTINGS_KEY = "LaneBatchUpdate/attribute_preset_order"
     ALL_LAYERS_ID = "__ALL_LAYERS__"
     EMPTY_PRESET_NAME = "空预设"
     LOG_TAG = "车道处理工具"
+    BUILTIN_PRESETS = {
+        ("MESH", "ID", "COLOR", "TYPE", "LAYER_NUM", "UUID"): {
+            "单虚线": {"COLOR": "0", "TYPE": "1"},
+            "双虚线": {"COLOR": "0", "TYPE": "2"},
+            "单实线": {"COLOR": "0", "TYPE": "3"},
+            "双实线": {"COLOR": "0", "TYPE": "4"},
+            "左虚右实": {"COLOR": "0", "TYPE": "5"},
+            "左实右虚": {"COLOR": "0", "TYPE": "6"},
+            "95": {"COLOR": "95", "TYPE": "11", "LAYER_NUM": "2"},
+            "0": {"COLOR": "0", "TYPE": "11", "LAYER_NUM": "2"},
+            "防护栏": {"COLOR": "95", "TYPE": "8"},
+            "马路牙": {"COLOR": "15", "TYPE": "7"},
+            "虚拟线": {"COLOR": "0", "TYPE": "9"},
+        },
+        ("MESH", "ID", "TYPE", "LANES", "LAYER_NUM", "UUID"): {
+            "红绿灯停止线": {"TYPE": "1"},
+            "减速让行": {"TYPE": "2"},
+            "停车让行": {"TYPE": "3"},
+        },
+        ("MESH", "ID", "TYPE", "HEIGHT", "LAYER_NUM"): {
+            "绿化带": {"TYPE": "1", "HEIGHT": "95"},
+            "站台": {"TYPE": "2", "HEIGHT": "15"},
+        },
+        ("MESH", "ID", "LANE_DIR", "TYPE", "ROAD_TYPE", "SECTION_NO", "ROAD_ID", "TURN_TYPE", "SPEEDLIMIT", "SECTION_ID", "BDY_LEFT", "BDY_RIGHT", "WIDTH", "LENGTH", "RBDY_L", "RBDY_R", "FROM_NODE", "TO_NODE", "LANE_NUM", "LEFT_FWD", "RIGHT_FWD", "LEFT_RVS", "RIGHT_RVS", "SIGNALS", "LAYER_NUM", "UUID", "VIRTUAL", "ALLOW_DIRS", "MAP_TYPE"): {
+            "社会道路": {"ROAD_TYPE": "2"},
+            "园区道路": {"ROAD_TYPE": "1"},
+            "室内道路": {"ROAD_TYPE": "3"},
+            "直行": {"TURN_TYPE": "1"},
+            "右转": {"TURN_TYPE": "2"},
+            "左转": {"TURN_TYPE": "3"},
+            "掉头": {"TURN_TYPE": "4"},
+            "右前": {"TURN_TYPE": "5"},
+            "右后": {"TURN_TYPE": "6"},
+            "左前": {"TURN_TYPE": "7"},
+            "左后": {"TURN_TYPE": "8"},
+        },
+    }
 
     def __init__(self, iface, plugin_dir):
         self.iface = iface
@@ -601,13 +721,52 @@ class AttributePresetController:
         if changed:
             self._write_all(data)
 
+    def _builtin_for(self, layer):
+        key = self._layer_key(layer)
+        if not isinstance(key, str) or not key.startswith("fields:"):
+            return {}
+        try:
+            field_names = tuple(json.loads(key[7:]))
+        except (TypeError, ValueError):
+            try:
+                field_names = tuple(ast.literal_eval(key[7:]))
+            except (TypeError, ValueError, SyntaxError):
+                return {}
+        return self.BUILTIN_PRESETS.get(field_names, {})
+
     def preset_names(self, layer):
         self.ensure_empty_presets()
-        names = self._all().get(self._layer_key(layer), {}).keys()
+        stored = self._all().get(self._layer_key(layer), {})
+        names = set(stored) | set(self._builtin_for(layer))
         return sorted(names, key=lambda name: (name != self.EMPTY_PRESET_NAME, name))
 
+    def ordered_preset_names(self, layer, names):
+        raw = QSettings().value(self.ORDER_SETTINGS_KEY, "{}")
+        try:
+            orders = json.loads(raw or "{}")
+        except (TypeError, ValueError):
+            orders = {}
+        saved = orders.get(self._layer_key(layer), [])
+        saved_names = [name for name in saved if name in names]
+        return saved_names + [name for name in names if name not in saved_names]
+
+    def save_preset_order(self, layer, names):
+        if not layer:
+            return
+        raw = QSettings().value(self.ORDER_SETTINGS_KEY, "{}")
+        try:
+            orders = json.loads(raw or "{}")
+        except (TypeError, ValueError):
+            orders = {}
+        orders[self._layer_key(layer)] = list(names)
+        QSettings().setValue(self.ORDER_SETTINGS_KEY, json.dumps(orders, ensure_ascii=False))
+        QSettings().sync()
+
     def get_preset(self, layer, name):
-        return self._all().get(self._layer_key(layer), {}).get(name, {})
+        stored = self._all().get(self._layer_key(layer), {})
+        if name in stored:
+            return stored[name]
+        return self._builtin_for(layer).get(name, {})
 
     def save_preset(self, layer, name, values):
         data = self._all()
