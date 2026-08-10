@@ -23,6 +23,34 @@ from qgis.PyQt.QtWidgets import (
     QWidget,
 )
 from qgis.core import Qgis, QgsMessageLog, QgsProject, QgsVectorLayer, NULL
+from qgis.gui import QgsMapToolIdentifyFeature
+
+
+class AttributeBrushMapTool(QgsMapToolIdentifyFeature):
+    """将预设字段写入地图画布中点击的线要素。"""
+
+    def __init__(self, controller, layer, values, preset_name):
+        super().__init__(controller.iface.mapCanvas(), layer)
+        self.controller = controller
+        self.layer = layer
+        self.values = values
+        self.preset_name = preset_name
+        self.featureIdentified.connect(self._apply_to_feature)
+
+    def _apply_to_feature(self, feature):
+        try:
+            changed = self.controller.apply_to_feature(self.layer, feature.id(), self.values)
+        except (RuntimeError, ValueError) as exc:
+            QMessageBox.critical(self.controller.iface.mainWindow(), "格式刷失败", str(exc))
+            return
+        if changed:
+            self.layer.triggerRepaint()
+            self.controller.iface.messageBar().pushMessage(
+                "属性格式刷",
+                f"已将预设“{self.preset_name}”应用到要素 {feature.id()}。",
+                Qgis.Info,
+                duration=4,
+            )
 
 
 class AttributePresetDialog(QDialog):
@@ -61,6 +89,13 @@ class AttributePresetDialog(QDialog):
         preset_row.addWidget(new_button)
         preset_row.addWidget(self.delete_button)
         layout.addLayout(preset_row)
+
+        layout.addWidget(QLabel("已保存预设"))
+        self.preset_list = QListWidget()
+        self.preset_list.setMinimumHeight(96)
+        self.preset_list.setMaximumHeight(150)
+        self.preset_list.itemClicked.connect(self._preset_list_clicked)
+        layout.addWidget(self.preset_list)
 
         name_row = QHBoxLayout()
         name_row.addWidget(QLabel("名称"))
@@ -111,8 +146,10 @@ class AttributePresetDialog(QDialog):
 
         buttons = QDialogButtonBox(QDialogButtonBox.Close)
         self.save_button = buttons.addButton("保存预设", QDialogButtonBox.ActionRole)
+        self.brush_button = buttons.addButton("格式刷", QDialogButtonBox.ActionRole)
         self.apply_button = buttons.addButton("应用属性", QDialogButtonBox.AcceptRole)
         self.save_button.clicked.connect(self._save_preset)
+        self.brush_button.clicked.connect(self._start_brush)
         self.apply_button.clicked.connect(self._apply_preset)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -152,18 +189,36 @@ class AttributePresetDialog(QDialog):
 
     def _layer_changed(self):
         self._clear_fields()
-        self.preset_combo.blockSignals(True)
-        self.preset_combo.clear()
-        preset_key = self._preset_key()
-        if preset_key:
-            self.controller.ensure_empty_presets()
-            for name in self.controller.preset_names(preset_key):
-                self.preset_combo.addItem(name)
-        self.preset_combo.blockSignals(False)
+        self._reload_presets()
         self.delete_button.setEnabled(False)
         # 默认不选预设，使表单可直接读取、编辑当前选中的一条要素。
         self.preset_combo.setCurrentIndex(-1)
         self._new_preset()
+
+    def _reload_presets(self):
+        preset_key = self._preset_key()
+        preset_names = []
+        if preset_key:
+            self.controller.ensure_empty_presets()
+            preset_names = self.controller.preset_names(preset_key)
+
+        self.preset_combo.blockSignals(True)
+        self.preset_combo.clear()
+        self.preset_combo.addItems(preset_names)
+        self.preset_combo.blockSignals(False)
+
+        self.preset_list.blockSignals(True)
+        self.preset_list.clear()
+        for name in preset_names:
+            if name == self.controller.EMPTY_PRESET_NAME:
+                continue
+            self.preset_list.addItem(QListWidgetItem(name))
+        self.preset_list.blockSignals(False)
+
+    def _preset_list_clicked(self, item):
+        index = self.preset_combo.findText(item.text())
+        if index >= 0:
+            self.preset_combo.setCurrentIndex(index)
 
     def _clear_fields(self):
         while self.form.rowCount():
@@ -352,8 +407,11 @@ class AttributePresetDialog(QDialog):
             QMessageBox.warning(self, "无法保存", "“空预设”为系统默认预设，不能修改。")
             return
         self.controller.save_preset(preset_key, name, self._values())
-        self._layer_changed()
+        self._reload_presets()
         self.preset_combo.setCurrentText(name)
+        list_item = self.preset_list.findItems(name, Qt.MatchExactly)
+        if list_item:
+            self.preset_list.setCurrentItem(list_item[0])
         QMessageBox.information(self, "保存成功", f"已保存预设：{name}")
 
     def _delete_preset(self):
@@ -367,7 +425,25 @@ class AttributePresetDialog(QDialog):
         answer = QMessageBox.question(self, "确认删除", f"删除预设“{name}”？")
         if answer == QMessageBox.Yes:
             self.controller.delete_preset(preset_key, name)
-            self._layer_changed()
+            self._reload_presets()
+            self.delete_button.setEnabled(False)
+            self._new_preset()
+
+    def _start_brush(self):
+        layer = self._current_layer()
+        values = self._values()
+        name = self.preset_combo.currentText().strip() or self.name_edit.text().strip()
+        if self._is_all_layers():
+            QMessageBox.warning(self, "无法启动格式刷", "请先选择一个具体的线图层。")
+            return
+        if not layer or layer.geometryType() != 1:
+            QMessageBox.warning(self, "无法启动格式刷", "当前图层必须是线图层。")
+            return
+        if not values:
+            QMessageBox.warning(self, "无法启动格式刷", "请先选择预设或填写至少一个属性值。")
+            return
+        self.controller.start_brush(layer, values, name or "直接修改")
+        self.close()
 
     def _apply_preset(self):
         layers = self._target_layers()
@@ -399,6 +475,7 @@ class AttributePresetController:
         self.iface = iface
         self.plugin_dir = plugin_dir
         self.dialog = None
+        self.brush_tool = None
 
     def initGui(self, actions):
         icon_path = f"{self.plugin_dir}/icon_attribute_preset.svg"
@@ -410,6 +487,7 @@ class AttributePresetController:
         actions.append(action)
 
     def unload(self):
+        self.stop_brush()
         if self.dialog:
             self.dialog.close()
             self.dialog = None
@@ -424,11 +502,30 @@ class AttributePresetController:
         self.dialog.raise_()
         self.dialog.activateWindow()
 
-    @staticmethod
-    def _layer_key(layer):
+    def start_brush(self, layer, values, preset_name):
+        self.stop_brush()
+        self.brush_tool = AttributeBrushMapTool(self, layer, values, preset_name)
+        self.iface.mapCanvas().setMapTool(self.brush_tool)
+        self.iface.messageBar().pushMessage(
+            "属性格式刷",
+            f"当前使用预设“{preset_name}”，请点击 {layer.name()} 线要素；按 Esc 结束。",
+            Qgis.Info,
+            duration=8,
+        )
+
+    def stop_brush(self):
+        if self.brush_tool is None:
+            return
+        canvas = self.iface.mapCanvas()
+        if canvas.mapTool() is self.brush_tool:
+            canvas.unsetMapTool(self.brush_tool)
+        self.brush_tool = None
+
+    def _layer_key(self, layer):
         if isinstance(layer, str):
             return layer
-        return layer.source().split("|", 1)[0] or layer.id()
+        field_names = tuple(f.name() for f in layer.fields())
+        return f"fields:{field_names}"
 
     @staticmethod
     def vector_layers():
@@ -553,6 +650,32 @@ class AttributePresetController:
         except (TypeError, ValueError):
             raise ValueError(f"字段 {field.name()} 的值“{raw}”格式不正确")
         return raw
+
+    def apply_to_feature(self, layer, feature_id, values):
+        if not isinstance(layer, QgsVectorLayer) or not layer.isValid():
+            raise RuntimeError("目标图层不可用。")
+        updates = {}
+        fields = layer.fields()
+        for name, raw in values.items():
+            field_index = fields.indexFromName(name)
+            if field_index >= 0:
+                updates[field_index] = self._convert(fields.at(field_index), raw)
+        if not updates:
+            raise RuntimeError("预设中的字段在目标图层中不存在。")
+        if not layer.isEditable() and not layer.startEditing():
+            raise RuntimeError(f"无法开启图层编辑：{layer.name()}")
+
+        layer.beginEditCommand("属性格式刷")
+        try:
+            for field_index, value in updates.items():
+                if not layer.changeAttributeValue(feature_id, field_index, value):
+                    field_name = fields.at(field_index).name()
+                    raise RuntimeError(f"更新要素失败：{feature_id}，字段：{field_name}")
+            layer.endEditCommand()
+        except Exception:
+            layer.destroyEditCommand()
+            raise
+        return bool(updates)
 
     def apply(self, layers, values, scope):
         if scope not in ("selected", "all"):
