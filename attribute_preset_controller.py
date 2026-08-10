@@ -16,6 +16,8 @@ from qgis.PyQt.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -79,11 +81,17 @@ class PresetButton(QPushButton):
 
 class PresetPanel(QWidget):
     orderChanged = pyqtSignal(list)
+    resized = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAcceptDrops(True)
         self.buttons = []
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.resized.emit()
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasText():
@@ -139,24 +147,40 @@ class AttributePresetDialog(QDialog):
         preset_row.addWidget(self.delete_button)
         layout.addLayout(preset_row)
 
-        layout.addWidget(QLabel("常用预设（单击加载，双击直接应用，可拖动排序）"))
+        self.preset_hint_label = QLabel("常用预设（单击加载，双击直接应用，可拖动排序）")
+        self.preset_hint_label.setWordWrap(False)
+        self.preset_hint_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self.preset_hint_label.setFixedHeight(self.preset_hint_label.sizeHint().height())
+        layout.addWidget(self.preset_hint_label)
         self.preset_panel = PresetPanel()
         self.preset_panel.orderChanged.connect(self._preset_order_changed)
         self.preset_grid = QGridLayout(self.preset_panel)
         self.preset_grid.setContentsMargins(0, 0, 0, 0)
         self.preset_grid.setHorizontalSpacing(6)
         self.preset_grid.setVerticalSpacing(6)
+        self.preset_grid.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self.preset_panel.resized.connect(self._layout_preset_buttons)
         layout.addWidget(self.preset_panel)
 
-        name_row = QHBoxLayout()
+        self.name_row_widget = QWidget()
+        name_row = QHBoxLayout(self.name_row_widget)
+        name_row.setContentsMargins(0, 0, 0, 0)
         name_row.addWidget(QLabel("名称"))
         self.name_edit = QLineEdit()
         name_row.addWidget(self.name_edit, 1)
-        layout.addLayout(name_row)
+        layout.addWidget(self.name_row_widget)
 
-        self.form = QFormLayout()
+        self.form_panel = QWidget()
+        self.form = QFormLayout(self.form_panel)
         self.form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
-        layout.addLayout(self.form)
+        self.form_scroll = QScrollArea()
+        self.form_scroll.setWidgetResizable(True)
+        self.form_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.form_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.form_scroll.setMinimumHeight(180)
+        self.form_scroll.setMaximumHeight(260)
+        self.form_scroll.setWidget(self.form_panel)
+        layout.addWidget(self.form_scroll)
 
         self.attribute_table = QTableWidget()
         self.attribute_table.setAlternatingRowColors(True)
@@ -279,6 +303,8 @@ class AttributePresetDialog(QDialog):
             if name == self.controller.EMPTY_PRESET_NAME:
                 continue
             button = PresetButton(name, self.preset_panel)
+            button.setMinimumWidth(96)
+            button.setMinimumHeight(28)
             button.setToolTip("单击加载预设；双击直接应用；拖动调整位置")
             button.clicked.connect(lambda checked=False, n=name: self._select_preset(n))
             button.doubleClicked.connect(lambda n=name: self._apply_named_preset(n))
@@ -286,8 +312,23 @@ class AttributePresetDialog(QDialog):
         self._layout_preset_buttons()
 
     def _layout_preset_buttons(self):
+        if not self.preset_panel.buttons:
+            self.preset_panel.setMinimumHeight(0)
+            self.preset_panel.setMaximumHeight(0)
+            return
+        button_width = max(
+            button.sizeHint().width() for button in self.preset_panel.buttons
+        )
+        available_width = max(self.preset_panel.width(), self.width() - 24)
+        columns = max(1, (available_width + 6) // (button_width + 6))
+        rows = (len(self.preset_panel.buttons) + columns - 1) // columns
+        row_height = max(button.sizeHint().height() for button in self.preset_panel.buttons)
+        panel_height = rows * row_height + max(0, rows - 1) * 6
+        self.preset_panel.setMinimumHeight(panel_height)
+        self.preset_panel.setMaximumHeight(panel_height)
         for index, button in enumerate(self.preset_panel.buttons):
-            self.preset_grid.addWidget(button, index // 5, index % 5)
+            self.preset_grid.addWidget(button, index // columns, index % columns)
+        self.preset_panel.updateGeometry()
 
     def _preset_order_changed(self, names):
         self._layout_preset_buttons()
@@ -310,6 +351,10 @@ class AttributePresetDialog(QDialog):
 
     def _show_table(self, layer, preserve_scope=False):
         self._clear_fields()
+        self.name_row_widget.hide()
+        self.form_scroll.hide()
+        self.layout().invalidate()
+        self.layout().activate()
         if not preserve_scope:
             has_selection = layer.selectedFeatureCount() > 0
             self.table_feature_scope.blockSignals(True)
@@ -420,21 +465,42 @@ class AttributePresetDialog(QDialog):
             self._show_table(layer)
 
     def _populate_fields(self, values=None):
-        self.attribute_table.hide()
-        self.table_filter_bar.hide()
-        self._clear_fields()
-        layers = self._target_layers()
-        if not layers:
-            return
-        values = values or {}
-        field_names = self.controller.available_field_names(layers, self._is_all_layers())
-        for name in field_names:
-            edit = QLineEdit()
-            edit.setPlaceholderText("不修改此字段")
-            if name in values and values[name] is not None:
-                edit.setText(str(values[name]))
-            self.form.addRow(self.controller.field_label(layers[0], name), edit)
-            self.fields[name] = edit
+        # 隐藏表格会触发布局重算，切换期间冻结尺寸避免窗口出现跳变。
+        previous_size = self.size() if self.attribute_table.isVisible() else None
+        previous_minimum = self.minimumSize()
+        previous_maximum = self.maximumSize()
+        if previous_size is not None:
+            self.setUpdatesEnabled(False)
+            self.setFixedSize(previous_size)
+        try:
+            self.attribute_table.hide()
+            self.table_filter_bar.hide()
+            self.preset_hint_label.show()
+            self.preset_panel.show()
+            self.name_row_widget.show()
+            self.form_scroll.show()
+            self.layout().invalidate()
+            self.layout().activate()
+            self._clear_fields()
+            layers = self._target_layers()
+            if not layers:
+                return
+            values = values or {}
+            field_names = self.controller.available_field_names(layers, self._is_all_layers())
+            for name in field_names:
+                edit = QLineEdit()
+                edit.setPlaceholderText("不修改此字段")
+                if name in values and values[name] is not None:
+                    edit.setText(str(values[name]))
+                self.form.addRow(self.controller.field_label(layers[0], name), edit)
+                self.fields[name] = edit
+        finally:
+            if previous_size is not None:
+                self.setMinimumSize(previous_minimum)
+                self.setMaximumSize(previous_maximum)
+                self.resize(previous_size)
+                self.setUpdatesEnabled(True)
+                self.update()
 
     def _preset_changed(self):
         preset_key = self._preset_key()
@@ -491,9 +557,6 @@ class AttributePresetDialog(QDialog):
         self.controller.save_preset(preset_key, name, self._values())
         self._reload_presets()
         self.preset_combo.setCurrentText(name)
-        list_item = self.preset_list.findItems(name, Qt.MatchExactly)
-        if list_item:
-            self.preset_list.setCurrentItem(list_item[0])
         QMessageBox.information(self, "保存成功", f"已保存预设：{name}")
 
     def _delete_preset(self):
@@ -545,6 +608,7 @@ class AttributePresetDialog(QDialog):
         self.controller.log_application(layers, name, count)
         for layer in layers:
             layer.triggerRepaint()
+        self.accept()
 
 
 class AttributePresetController:
