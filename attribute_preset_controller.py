@@ -3,13 +3,15 @@
 import ast
 import json
 
-from qgis.PyQt.QtCore import QMimeData, QSettings, Qt, pyqtSignal
-from qgis.PyQt.QtGui import QDrag, QIcon
+from qgis.PyQt.QtCore import QMimeData, QSettings, QTimer, Qt, pyqtSignal
+from qgis.PyQt.QtGui import QDrag, QIcon, QColor
 from qgis.PyQt.QtWidgets import (
     QAction,
     QComboBox,
     QDialog,
+    QDialogButtonBox,
     QFormLayout,
+    QGroupBox,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -23,8 +25,248 @@ from qgis.PyQt.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from qgis.core import Qgis, QgsMessageLog, QgsProject, QgsVectorLayer, NULL
-from qgis.gui import QgsMapToolIdentifyFeature
+from qgis.core import (
+    Qgis,
+    QgsFeature,
+    QgsGeometry,
+    QgsMessageLog,
+    QgsPointLocator,
+    QgsPointXY,
+    QgsProject,
+    QgsVectorLayer,
+    NULL,
+)
+from qgis.gui import (
+    QgsAttributeForm,
+    QgsMapTool,
+    QgsMapToolIdentifyFeature,
+    QgsRubberBand,
+    QgsSnapIndicator,
+)
+
+
+_ACTIVE_CONTROLLER = None
+
+
+def init_attribute_form(dialog, layer, feature):
+    if _ACTIVE_CONTROLLER is None:
+        return
+    if isinstance(layer, str):
+        layer = QgsProject.instance().mapLayer(layer)
+    _ACTIVE_CONTROLLER.add_form_preset_widget(dialog, layer)
+
+
+class AddFeatureMapTool(QgsMapTool):
+    def __init__(self, controller, layer):
+        super().__init__(controller.iface.mapCanvas())
+        self.controller = controller
+        self.layer = layer
+        self.canvas = controller.iface.mapCanvas()
+        self.points = []
+        self._paused = False
+        self._cancelled = False
+        self.snap_indicator = QgsSnapIndicator(self.canvas)
+        self.snap_indicator.setMatch(QgsPointLocator.Match())
+        self.rubber_band = QgsRubberBand(self.canvas, layer.geometryType())
+        preview_color = QColor(255, 0, 0, 51 if layer.geometryType() == 2 else 255)
+        self.rubber_band.setColor(preview_color)
+        self.rubber_band.setWidth(2)
+        self.rubber_band.setVisible(True)
+
+    def canvasPressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.points.append(self._map_point(event.pos()))
+            self._refresh_rubber_band()
+        elif event.button() == Qt.RightButton:
+            self._finish()
+
+    def _map_point(self, screen_pos):
+        snapping_config = QgsProject.instance().snappingConfig()
+        if snapping_config.enabled():
+            match = self.canvas.snappingUtils().snapToMap(screen_pos)
+            if match.isValid():
+                self.snap_indicator.setMatch(match)
+                return match.point()
+        self.snap_indicator.setMatch(QgsPointLocator.Match())
+        return self.toMapCoordinates(screen_pos)
+
+    def canvasMoveEvent(self, event):
+        cursor_point = self._map_point(event.pos())
+        if self.points:
+            self._refresh_rubber_band(cursor_point)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self.cancel()
+        else:
+            super().keyPressEvent(event)
+
+    def _refresh_rubber_band(self, cursor_point=None):
+        active_layer = self.controller.iface.activeLayer()
+        if isinstance(active_layer, QgsVectorLayer) and active_layer.isValid() and active_layer is not self.layer:
+            self.layer = active_layer
+            self.rubber_band.reset(self.layer.geometryType())
+            self.rubber_band.setColor(QColor(255, 0, 0, 51 if self.layer.geometryType() == 2 else 255))
+        points = list(self.points)
+        if cursor_point is not None:
+            points.append(cursor_point)
+        if self.layer.geometryType() == 0:
+            if points:
+                self.rubber_band.setToGeometry(QgsGeometry.fromPointXY(points[-1]), self.layer.crs())
+        elif self.layer.geometryType() == 1:
+            if len(points) >= 2:
+                self.rubber_band.setToGeometry(QgsGeometry.fromPolylineXY(points), self.layer.crs())
+        elif len(points) >= 2:
+            ring = points + [points[0]]
+            self.rubber_band.setToGeometry(QgsGeometry.fromPolygonXY([ring]), self.layer.crs())
+
+    def _finish(self):
+        layer = self.controller.iface.activeLayer()
+        if not isinstance(layer, QgsVectorLayer) or not layer.isValid():
+            return
+        geometry_type = layer.geometryType()
+        if geometry_type not in (0, 1, 2):
+            return
+        if layer is not self.layer:
+            self.layer = layer
+            self.rubber_band.reset(geometry_type)
+            self.rubber_band.setColor(QColor(255, 0, 0, 51 if geometry_type == 2 else 255))
+        if (geometry_type == 0 and len(self.points) != 1) or (geometry_type in (1, 2) and len(self.points) < 2):
+            return
+        geometry = {
+            0: QgsGeometry.fromPointXY(self.points[0]),
+            1: QgsGeometry.fromPolylineXY(self.points),
+            2: QgsGeometry.fromPolygonXY([self.points + [self.points[0]]]),
+        }[geometry_type]
+        self.controller.finish_add_feature(layer, geometry)
+        if not self._cancelled:
+            self.points.clear()
+            self.rubber_band.reset(self.layer.geometryType())
+            self.rubber_band.setVisible(True)
+
+    def pause(self):
+        if self._cancelled:
+            return
+        self._paused = True
+        self.snap_indicator.setMatch(QgsPointLocator.Match())
+        self.rubber_band.setVisible(True)
+
+    def resume(self):
+        if self._cancelled:
+            return
+        self._paused = False
+        self.rubber_band.setVisible(True)
+        self._refresh_rubber_band()
+
+    def cancel(self):
+        if self._cancelled:
+            return
+        self._cancelled = True
+        self.points.clear()
+        self.snap_indicator.setMatch(QgsPointLocator.Match())
+        self.rubber_band.reset(self.layer.geometryType())
+        self.rubber_band.hide()
+        self.canvas.unsetMapTool(self)
+        self.deleteLater()
+
+
+class NewFeatureDialog(QDialog):
+    def __init__(self, controller, layer, feature, parent=None):
+        super().__init__(parent or controller.iface.mainWindow())
+        self.controller = controller
+        self.layer = layer
+        self.feature = feature
+        self.form = None
+        self.preset_buttons = []
+        self.preset_grid = None
+        self.setWindowTitle(f"新增要素属性 - {layer.name()}")
+        self.setMinimumSize(560, 520)
+        saved_size = QSettings().value("LaneBatchUpdate/new_feature_dialog_size")
+        if saved_size:
+            self.resize(saved_size)
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        preset_group = QGroupBox("属性预设", self)
+        preset_layout = QVBoxLayout(preset_group)
+        self.preset_panel = QWidget(preset_group)
+        self.preset_grid = QGridLayout(self.preset_panel)
+        self.preset_grid.setContentsMargins(0, 0, 0, 0)
+        self.preset_grid.setHorizontalSpacing(6)
+        self.preset_grid.setVerticalSpacing(6)
+        preset_layout.addWidget(self.preset_panel)
+        names = [name for name in self.controller.ordered_preset_names(self.layer, self.controller.preset_names(self.layer)) if name != self.controller.EMPTY_PRESET_NAME]
+        for name in names:
+            button = PresetButton(name, self.preset_panel)
+            button.setMinimumWidth(92)
+            button.clicked.connect(lambda checked=False, n=name: self.apply_preset(n))
+            button.doubleClicked.connect(lambda n=name: self._apply_preset_and_accept(n))
+            self.preset_buttons.append(button)
+        if not names:
+            self.preset_grid.addWidget(QLabel("当前图层还没有可用预设。"), 0, 0)
+        layout.addWidget(preset_group)
+        self.form = QgsAttributeForm(self.layer, self.feature, parent=self)
+        self.form_scroll = QScrollArea(self)
+        self.form_scroll.setWidgetResizable(True)
+        self.form_scroll.setWidget(self.form)
+        layout.addWidget(self.form_scroll, 1)
+        self._layout_preset_buttons()
+        QTimer.singleShot(0, self._layout_preset_buttons)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.preset_grid:
+            self._layout_preset_buttons()
+
+    def _layout_preset_buttons(self):
+        if not self.preset_buttons:
+            return
+        available_width = max(1, self.preset_panel.width())
+        button_width = max(button.sizeHint().width() for button in self.preset_buttons)
+        columns = max(1, (available_width + 6) // (button_width + 6))
+        while self.preset_grid.count():
+            item = self.preset_grid.takeAt(0)
+            if item.widget():
+                item.widget().setParent(self.preset_panel)
+        for index, button in enumerate(self.preset_buttons):
+            self.preset_grid.addWidget(button, index // columns, index % columns)
+
+    def _apply_preset_and_accept(self, name):
+        self.apply_preset(name)
+        self.accept()
+
+    def apply_preset(self, name):
+        try:
+            values = self.controller.get_preset(self.layer, name)
+            for field_name, raw in values.items():
+                index = self.layer.fields().indexFromName(field_name)
+                if index >= 0:
+                    self.form.changeAttribute(field_name, self.controller._convert(self.layer.fields().at(index), raw))
+        except (RuntimeError, ValueError) as exc:
+            QMessageBox.warning(self, "加载预设失败", str(exc))
+
+    def accept(self):
+        if hasattr(self.form, "save"):
+            save_result = self.form.save()
+            if save_result is False:
+                QMessageBox.warning(self, "新增失败", "无法保存属性表单中的修改。")
+                return
+        updated_feature = self.form.feature()
+        self.feature.setAttributes(updated_feature.attributes())
+        if self.layer.addFeature(self.feature):
+            QSettings().setValue("LaneBatchUpdate/new_feature_dialog_size", self.size())
+            super().accept()
+        else:
+            QMessageBox.warning(self, "新增失败", f"无法向图层“{self.layer.name()}”添加要素。")
+
+    def reject(self):
+        QSettings().setValue("LaneBatchUpdate/new_feature_dialog_size", self.size())
+        super().reject()
 
 
 class AttributeBrushMapTool(QgsMapToolIdentifyFeature):
@@ -660,10 +902,25 @@ class AttributePresetController:
         self.plugin_dir = plugin_dir
         self.dialog = None
         self.brush_tool = None
+        self.add_feature_action = None
+        self.add_feature_tool = None
 
     def initGui(self, actions):
-        icon_path = f"{self.plugin_dir}/icon_attribute_preset.svg"
-        action = QAction(QIcon(icon_path), "属性预设", self.iface.mainWindow())
+        global _ACTIVE_CONTROLLER
+        _ACTIVE_CONTROLLER = self
+        self._remove_previous_form_hooks()
+        preset_icon_path = f"{self.plugin_dir}/icon_attribute_preset.svg"
+        add_feature_icon_path = f"{self.plugin_dir}/icon_add_feature_preset.svg"
+        self.iface.mapCanvas().mapToolSet.connect(self._on_map_tool_set)
+        self.add_feature_action = QAction(QIcon(add_feature_icon_path), "添加要素", self.iface.mainWindow())
+        self.add_feature_action.setCheckable(True)
+        self.add_feature_action.setToolTip("点击开启绘制工具，再点击关闭")
+        self.add_feature_action.triggered.connect(self._toggle_add_feature)
+        self.iface.addVectorToolBarIcon(self.add_feature_action)
+        self.iface.addPluginToVectorMenu("车道处理工具", self.add_feature_action)
+        actions.append(self.add_feature_action)
+
+        action = QAction(QIcon(preset_icon_path), "属性预设", self.iface.mainWindow())
         action.setToolTip("保存和应用图层属性预设")
         action.triggered.connect(self.show)
         self.iface.addVectorToolBarIcon(action)
@@ -671,10 +928,179 @@ class AttributePresetController:
         actions.append(action)
 
     def unload(self):
+        global _ACTIVE_CONTROLLER
+        if _ACTIVE_CONTROLLER is self:
+            _ACTIVE_CONTROLLER = None
+        try:
+            self.iface.mapCanvas().mapToolSet.disconnect(self._on_map_tool_set)
+        except (TypeError, RuntimeError):
+            pass
+        self.stop_add_feature()
         self.stop_brush()
         if self.dialog:
             self.dialog.close()
             self.dialog = None
+
+    def _remove_previous_form_hooks(self):
+        for layer in self.vector_layers():
+            config = layer.editFormConfig()
+            if config.initFunction() != "attribute_preset_controller.init_attribute_form":
+                continue
+            config.setInitFunction("")
+            config.setInitCode("")
+            layer.setEditFormConfig(config)
+
+    def _on_layers_added(self, layers):
+        for layer in layers:
+            self._install_form_hook(layer)
+
+    def _install_form_hooks(self):
+        for layer in self.vector_layers():
+            self._install_form_hook(layer)
+
+    def _install_form_hook(self, layer):
+        if not isinstance(layer, QgsVectorLayer) or not layer.isValid():
+            return
+        if layer.id() in self._connected_layers:
+            config = layer.editFormConfig()
+            if config.initFunction() == "attribute_preset_controller.init_attribute_form":
+                return
+        config = layer.editFormConfig()
+        if layer.id() not in self._form_originals:
+            self._form_originals[layer.id()] = (
+                config.initFunction(),
+                config.initCode(),
+                getattr(config, "initCodeSource", lambda: None)(),
+            )
+        config.setInitFunction("attribute_preset_controller.init_attribute_form")
+        config.setInitCode("")
+        layer.setEditFormConfig(config)
+        self._connected_layers.add(layer.id())
+
+    def _restore_form_hooks(self):
+        for layer_id, original in self._form_originals.items():
+            layer = QgsProject.instance().mapLayer(layer_id)
+            if not layer:
+                continue
+            config = layer.editFormConfig()
+            if config.initFunction() != "attribute_preset_controller.init_attribute_form":
+                continue
+            config.setInitFunction(original[0])
+            config.setInitCode(original[1])
+            if len(original) > 2:
+                config.setInitCodeSource(original[2])
+            layer.setEditFormConfig(config)
+        self._form_originals.clear()
+        self._connected_layers.clear()
+
+    def add_form_preset_widget(self, dialog, layer):
+        if not isinstance(layer, QgsVectorLayer) or layer.geometryType() not in (0, 1, 2):
+            return
+        if dialog.findChild(QWidget, "lane_batch_attribute_preset_group"):
+            return
+        form = dialog.attributeForm() if hasattr(dialog, "attributeForm") else dialog
+        if not form or not hasattr(form, "changeAttribute"):
+            return
+        group = QGroupBox("属性预设", dialog)
+        group.setObjectName("lane_batch_attribute_preset_group")
+        row = QHBoxLayout(group)
+        buttons = []
+        names = [
+            name for name in self.ordered_preset_names(layer, self.preset_names(layer))
+            if name != self.EMPTY_PRESET_NAME
+        ]
+
+        def apply_preset(name):
+            try:
+                values = self.get_preset(layer, name)
+                for field_name, raw in values.items():
+                    index = layer.fields().indexFromName(field_name)
+                    if index >= 0:
+                        form.changeAttribute(
+                            field_name,
+                            self._convert(layer.fields().at(index), raw),
+                        )
+            except (RuntimeError, ValueError) as exc:
+                QMessageBox.warning(dialog, "加载预设失败", str(exc))
+
+        for name in names:
+            button = PresetButton(name, group)
+            button.setMinimumWidth(92)
+            button.setToolTip("单击加载；双击直接应用")
+            button.clicked.connect(lambda checked=False, n=name: apply_preset(n))
+            button.doubleClicked.connect(lambda n=name: apply_preset(n))
+            row.addWidget(button)
+            buttons.append(button)
+        if not buttons:
+            row.addWidget(QLabel("当前图层还没有可用预设。"))
+        row.addStretch(1)
+        layout = dialog.layout()
+        if layout:
+            layout.insertWidget(max(0, layout.count() - 1), group)
+
+    def _on_map_tool_set(self, tool, _old_tool=None):
+        if tool is not self.add_feature_tool and self.add_feature_tool is not None:
+            self.add_feature_tool.pause()
+            if self.add_feature_action:
+                self.add_feature_action.setChecked(False)
+
+    def _resume_add_feature(self):
+        if self.add_feature_tool and not self.add_feature_tool._cancelled:
+            self.add_feature_tool.resume()
+            self.iface.mapCanvas().setMapTool(self.add_feature_tool)
+            if self.add_feature_action:
+                self.add_feature_action.setChecked(True)
+            return True
+        return False
+
+    def _toggle_add_feature(self, checked):
+        if checked:
+            self.add_feature()
+        else:
+            self._deactivate_add_feature()
+
+    def _deactivate_add_feature(self):
+        self.stop_add_feature()
+        if self.add_feature_action:
+            self.add_feature_action.setChecked(False)
+
+    def add_feature(self):
+        if self._resume_add_feature():
+            return
+        layer = self.iface.activeLayer()
+        if not isinstance(layer, QgsVectorLayer) or not layer.isValid():
+            QMessageBox.warning(self.iface.mainWindow(), "无法添加要素", "请先在图层面板中选择一个矢量图层。")
+            return
+        if layer.geometryType() not in (0, 1, 2):
+            QMessageBox.warning(self.iface.mainWindow(), "无法添加要素", "当前图层几何类型不支持绘制。")
+            return
+        if not layer.isEditable() and not layer.startEditing():
+            QMessageBox.warning(self.iface.mainWindow(), "无法添加要素", f"无法开启图层编辑：{layer.name()}")
+            return
+        self.stop_add_feature()
+        self.add_feature_tool = AddFeatureMapTool(self, layer)
+        self.iface.mapCanvas().setMapTool(self.add_feature_tool)
+        self.iface.messageBar().pushMessage(
+            "添加要素（带属性预设）",
+            "左键绘制，右键结束；Esc 取消。",
+            Qgis.Info,
+            duration=6,
+        )
+
+    def stop_add_feature(self):
+        if self.add_feature_tool:
+            tool = self.add_feature_tool
+            self.add_feature_tool = None
+            tool.cancel()
+
+    def finish_add_feature(self, layer, geometry):
+        feature = QgsFeature(layer.fields())
+        feature.setGeometry(geometry)
+        dialog = NewFeatureDialog(self, layer, feature)
+        result = dialog.exec_()
+        if result == QDialog.Accepted:
+            layer.updateExtents()
+            layer.triggerRepaint()
 
     def show(self):
         if self.dialog is None:

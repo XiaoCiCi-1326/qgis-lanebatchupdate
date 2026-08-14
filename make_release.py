@@ -35,6 +35,7 @@ RELEASE_FILES = (
     "icon_map_tile_snap.svg",
     "icon_lane_boundary_join.svg",
     "icon_attribute_preset.svg",
+    "icon_add_feature_preset.svg",
     "lane_fix_excel.py",
     "lane_fix_engine.py",
     "lane_fix_controller.py",
