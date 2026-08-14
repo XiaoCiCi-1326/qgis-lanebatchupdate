@@ -9,9 +9,10 @@
   转向个数刷值   → VIRTUAL 规则 2.1~2.2
   移除所有图层   → 从当前 QGIS 工程中移除全部图层
 """
-from qgis.PyQt.QtGui import QIcon
+from qgis.PyQt.QtGui import QIcon, QColor
 from qgis.PyQt.QtWidgets import QAction, QMessageBox
 from qgis.core import QgsProject, Qgis, QgsFeatureRequest, QgsVectorLayer
+from qgis.gui import QgsHighlight
 from collections import defaultdict
 from datetime import datetime
 import os
@@ -31,6 +32,8 @@ class LaneBatchUpdateTool:
     MODE_SET_ROAD2 = "set_road2"
     MODE_VIRTUAL = "virtual"
     MODE_REMOVE_ALL = "remove_all"
+    MODE_CHECK_RIGHT_STRAIGHT = "check_right_straight"
+    MODE_CLEAR_RIGHT_STRAIGHT = "clear_right_straight"
 
     def __init__(self, iface):
         self.iface = iface
@@ -39,6 +42,7 @@ class LaneBatchUpdateTool:
         self.log_lines = []
         self.shp_dir = ""
         self.field_names = {}
+        self.overlap_highlights = []
         self.reconstruct = ReconstructController(iface, self.plugin_dir, self.log)
         self.lane_fix = LaneFixController(iface, self.plugin_dir, self.log)
         self.excel_preview = ExcelPreviewController(iface, self.plugin_dir, self.log)
@@ -52,6 +56,8 @@ class LaneBatchUpdateTool:
             (self.MODE_SPEED, "限速刷值", "icon_speed.png"),
             (self.MODE_SET_ROAD2, "ROAD_TYPE=2", "icon_road2.png"),
             (self.MODE_VIRTUAL, "转向个数刷值", "icon_virtual.png"),
+            (self.MODE_CHECK_RIGHT_STRAIGHT, "右转压直行检查", "icon_check_right_straight.svg"),
+            (self.MODE_CLEAR_RIGHT_STRAIGHT, "取消交点高亮", "icon_clear_right_straight.svg"),
             (self.MODE_REMOVE_ALL, "移除所有图层", "icon_remove_layers.svg"),
         )
         for mode, label, icon_name in buttons:
@@ -70,6 +76,7 @@ class LaneBatchUpdateTool:
         self.attribute_preset.initGui(self.actions)
 
     def unload(self):
+        self.clear_overlap_highlights()
         for action in self.actions:
             self.iface.removeVectorToolBarIcon(action)
             self.iface.removePluginFromVectorMenu("车道处理工具", action)
@@ -81,6 +88,153 @@ class LaneBatchUpdateTool:
         self.map_tile_snap.unload()
         self.lane_boundary_join.unload()
         self.attribute_preset.unload()
+
+    def clear_overlap_highlights(self):
+        for highlight in self.overlap_highlights:
+            try:
+                self.iface.mapCanvas().scene().removeItem(highlight)
+            except (AttributeError, RuntimeError):
+                pass
+            try:
+                highlight.hide()
+                highlight.deleteLater()
+            except (AttributeError, RuntimeError):
+                pass
+        self.overlap_highlights = []
+
+    @staticmethod
+    def line_endpoints(geometry):
+        parts = geometry.asMultiPolyline() if geometry.isMultipart() else [geometry.asPolyline()]
+        endpoints = []
+        for part in parts:
+            if part:
+                endpoints.extend((part[0], part[-1]))
+        return endpoints
+
+    @staticmethod
+    def point_matches_endpoint(point, endpoints, tolerance=1e-8):
+        return any(
+            abs(point.x() - endpoint.x()) <= tolerance
+            and abs(point.y() - endpoint.y()) <= tolerance
+            for endpoint in endpoints
+        )
+
+    @classmethod
+    def has_shared_endpoint(cls, right_geometry, straight_geometry):
+        right_endpoints = cls.line_endpoints(right_geometry)
+        straight_endpoints = cls.line_endpoints(straight_geometry)
+        return any(
+            cls.point_matches_endpoint(point, straight_endpoints)
+            for point in right_endpoints
+        )
+
+    def has_non_endpoint_intersection(self, right_geometry, straight_geometry):
+        intersection = right_geometry.intersection(straight_geometry)
+        if intersection.isEmpty():
+            return False
+        if intersection.type() != 0:
+            return True
+        right_endpoints = self.line_endpoints(right_geometry)
+        straight_endpoints = self.line_endpoints(straight_geometry)
+        intersection_points = list(intersection.vertices())
+        return any(
+            not (
+                self.point_matches_endpoint(point, right_endpoints)
+                and self.point_matches_endpoint(point, straight_endpoints)
+            )
+            for point in intersection_points
+        )
+
+    def run_check_right_straight_overlap(self):
+        lane_layer = self.get_project_layer("LANE")
+        if not lane_layer:
+            QMessageBox.critical(None, "图层缺失", "请在 QGIS 中加载 LANE 图层")
+            return
+
+        self.field_names, missing = self.resolve_field_map(
+            lane_layer, ["ID", "TYPE", "TURN_TYPE"]
+        )
+        if missing:
+            QMessageBox.critical(None, "字段缺失", f"LANE 缺少字段：{', '.join(missing)}")
+            return
+
+        self.clear_overlap_highlights()
+        lane_groups = {1: ([], []), 2: ([], [])}
+        for feat in lane_layer.getFeatures():
+            lane_type = self.to_int(self.feat_val(feat, "TYPE"))
+            if lane_type not in lane_groups:
+                continue
+            turn_type = self.to_int(self.feat_val(feat, "TURN_TYPE"))
+            if turn_type == 2:
+                lane_groups[lane_type][0].append(feat)
+            elif turn_type == 1:
+                lane_groups[lane_type][1].append(feat)
+
+        right_lanes = [feat for right, _ in lane_groups.values() for feat in right]
+        straight_lanes = [feat for _, straight in lane_groups.values() for feat in straight]
+        conflicts = {}
+        for lane_type, (group_right_lanes, group_straight_lanes) in lane_groups.items():
+            for right_feat in group_right_lanes:
+                right_geometry = right_feat.geometry()
+                if right_geometry is None or right_geometry.isEmpty():
+                    continue
+                for straight_feat in group_straight_lanes:
+                    straight_geometry = straight_feat.geometry()
+                    if straight_geometry is None or straight_geometry.isEmpty():
+                        continue
+                    if not self.has_shared_endpoint(right_geometry, straight_geometry):
+                        continue
+                    if not right_geometry.boundingBox().intersects(straight_geometry.boundingBox()):
+                        continue
+                    if not right_geometry.intersects(straight_geometry):
+                        continue
+                    if not self.has_non_endpoint_intersection(
+                        right_geometry, straight_geometry
+                    ):
+                        continue
+                    right_id = self.norm_id(self.feat_val(right_feat, "ID"))
+                    straight_id = self.norm_id(self.feat_val(straight_feat, "ID"))
+                    conflicts.setdefault(right_id, set()).add(straight_id)
+
+        canvas = self.iface.mapCanvas()
+        for right_feat in right_lanes:
+            right_id = self.norm_id(self.feat_val(right_feat, "ID"))
+            if right_id not in conflicts:
+                continue
+            highlight = QgsHighlight(canvas, right_feat.geometry(), lane_layer)
+            highlight.setColor(QColor("#20a05a"))
+            highlight.setWidth(4)
+            highlight.show()
+            self.overlap_highlights.append(highlight)
+        straight_ids = {item for values in conflicts.values() for item in values}
+        for straight_feat in straight_lanes:
+            straight_id = self.norm_id(self.feat_val(straight_feat, "ID"))
+            if straight_id not in straight_ids:
+                continue
+            highlight = QgsHighlight(canvas, straight_feat.geometry(), lane_layer)
+            highlight.setColor(QColor("#f2c94c"))
+            highlight.setWidth(4)
+            highlight.show()
+            self.overlap_highlights.append(highlight)
+
+        if conflicts:
+            self.log(
+                f"发现同类车道右转线与直行线有交叉：右转 {len(conflicts)} 条，直行 {len(straight_ids)} 条",
+                level="ERROR",
+                show_bar=False,
+            )
+            details = "\n".join(
+                f"右转 {right_id} ↔ 直行 {', '.join(sorted(straight_ids))}"
+                for right_id, straight_ids in sorted(conflicts.items())
+            )
+            QMessageBox.warning(
+                None,
+                "发现同类车道右转线与直行线有交叉",
+                f"已高亮交叉相关线（绿=右转，黄=直行）：\n\n{details}",
+            )
+        else:
+            QMessageBox.information(None, "同类车道交叉检查", "未发现同类车道中右转线与直行线有交叉。")
+        canvas.refresh()
 
     @staticmethod
     def is_empty(value):
@@ -256,7 +410,7 @@ class LaneBatchUpdateTool:
         self.log_startup(lane_layer)
 
         lane_required = [
-            "ID", "TYPE", "ROAD_TYPE", "TURN_TYPE", "ROAD_ID", "FROM_NODE", "TO_NODE", "SPEEDLIMIT",
+            "ID", "TYPE", "ROAD_TYPE", "TURN_TYPE", "ROAD_ID", "SECTION_ID", "FROM_NODE", "TO_NODE", "SPEEDLIMIT",
         ]
         self.field_names, missing = self.resolve_field_map(lane_layer, lane_required)
         if missing:
@@ -599,6 +753,37 @@ class LaneBatchUpdateTool:
                     return speed
         return None
 
+    def split_turn_lane_speed(self, ctx, lane_id, node_id, end):
+        """跨越同 SECTION_ID 的双转向断点，查询同一路径另一段的外侧节点。"""
+        node_id = self.norm_id(node_id)
+        lane_ids = ctx.get("node_lane_order", {}).get(node_id, [])
+        if len(lane_ids) != 2:
+            return None
+
+        lane_by_id = ctx["lane_by_id"]
+        lane = lane_by_id.get(lane_id)
+        if lane is None:
+            return None
+        section_id = self.norm_id(self.feat_val(lane, "SECTION_ID"))
+        if not section_id:
+            return None
+
+        other_id = next((item for item in lane_ids if item != lane_id), None)
+        other = lane_by_id.get(other_id)
+        if other is None:
+            return None
+        if not self.to_int(self.feat_val(other, "TURN_TYPE")):
+            return None
+        if self.norm_id(self.feat_val(other, "SECTION_ID")) != section_id:
+            return None
+
+        other_from = self.norm_id(self.feat_val(other, "FROM_NODE"))
+        other_to = self.norm_id(self.feat_val(other, "TO_NODE"))
+        outside_node = other_to if other_from == node_id else other_from
+        if not outside_node:
+            return None
+        return self.speed_from_node_lane_list(ctx, other_id, outside_node, end=end)
+
     def cross_lane_speed(self, ctx, feat):
         """FUN_004226c0 规则 1.6：from/to 节点各取关联限速，再取 min。"""
         lane_id = self.norm_id(self.feat_val(feat, "ID"))
@@ -606,6 +791,10 @@ class LaneBatchUpdateTool:
         to_node = self.norm_id(self.feat_val(feat, "TO_NODE"))
         speed_from = self.speed_from_node_lane_list(ctx, lane_id, from_node, end="from")
         speed_to = self.speed_from_node_lane_list(ctx, lane_id, to_node, end="to")
+        if speed_from is None:
+            speed_from = self.split_turn_lane_speed(ctx, lane_id, from_node, end="from")
+        if speed_to is None:
+            speed_to = self.split_turn_lane_speed(ctx, lane_id, to_node, end="to")
         if speed_from is None:
             self.log(
                 f"路口laneid={lane_id},未找到关联的驶入lane",
@@ -922,6 +1111,13 @@ class LaneBatchUpdateTool:
                     return
                 self.run_virtual(ctx)
                 done_text = "转向个数刷值完成！"
+            elif mode == self.MODE_CHECK_RIGHT_STRAIGHT:
+                self.run_check_right_straight_overlap()
+                return
+            elif mode == self.MODE_CLEAR_RIGHT_STRAIGHT:
+                self.clear_overlap_highlights()
+                self.iface.mapCanvas().refresh()
+                return
             else:
                 return
         except RuntimeError as exc:
