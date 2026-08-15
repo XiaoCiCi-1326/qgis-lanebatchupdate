@@ -59,6 +59,8 @@ class LaneBatchUpdateTool:
             self.run_check_right_straight_overlap,
             self.boundary_length.apply_filter,
             self.clear_all_highlights,
+            self.run_check_speedlimit,
+            self.run_check_virtual,
         )
 
     def initGui(self):
@@ -291,6 +293,159 @@ class LaneBatchUpdateTool:
             )
         canvas.refresh()
 
+    def run_check_speedlimit(self):
+        lane_layer = self.get_project_layer("LANE")
+        if lane_layer is None:
+            QMessageBox.critical(None, "图层缺失", "请在 QGIS 中加载 LANE 图层")
+            return
+        fields, missing = self.resolve_field_map(lane_layer, ["ID", "SPEEDLIMIT"])
+        if missing:
+            QMessageBox.critical(None, "字段缺失", "LANE 缺少字段：%s" % ", ".join(missing))
+            return
+
+        records = []
+        for feature in lane_layer.getFeatures():
+            speedlimit = feature[fields["SPEEDLIMIT"]]
+            if not self.is_empty(speedlimit) and self.to_int(speedlimit) != 40:
+                continue
+            lane_id = self.norm_id(feature[fields["ID"]]) or str(feature.id())
+            reason = "不能为空" if self.is_empty(speedlimit) else "不能为40"
+            records.append(
+                {
+                    "type": "SPEEDLIMIT检查",
+                    "message": "LANE ID为 %s 的 SPEEDLIMIT%s" % (lane_id, reason),
+                    "selections": {lane_layer.id(): [feature.id()]},
+                    "display_layers": {lane_layer.id(): lane_layer.name()},
+                    "display_ids": {lane_layer.id(): [lane_id]},
+                }
+            )
+        self.error_results.replace_records(records, "SPEEDLIMIT检查")
+
+    def run_check_virtual(self):
+        lane_layer = self.get_project_layer("LANE")
+        intersection_layer = self.get_project_layer("INTERSECTION")
+        lane_node_layer = self.get_project_layer("LANE_NODE")
+        if lane_layer is None or intersection_layer is None or lane_node_layer is None:
+            missing_layers = []
+            if lane_layer is None:
+                missing_layers.append("LANE")
+            if intersection_layer is None:
+                missing_layers.append("INTERSECTION")
+            if lane_node_layer is None:
+                missing_layers.append("LANE_NODE")
+            QMessageBox.critical(None, "图层缺失", "请在 QGIS 中加载图层：%s" % ", ".join(missing_layers))
+            return
+        lane_fields, missing = self.resolve_field_map(
+            lane_layer, ["ID", "ROAD_ID", "VIRTUAL", "TURN_TYPE", "LANE_DIR", "FROM_NODE", "TO_NODE"]
+        )
+        intersection_fields, intersection_missing = self.resolve_field_map(
+            intersection_layer, ["ROADS"]
+        )
+        lane_node_fields, lane_node_missing = self.resolve_field_map(
+            lane_node_layer, ["ID", "LANES"]
+        )
+        missing.extend("INTERSECTION.%s" % name for name in intersection_missing)
+        missing.extend("LANE_NODE.%s" % name for name in lane_node_missing)
+        if missing:
+            QMessageBox.critical(None, "字段缺失", "缺少字段：%s" % ", ".join(missing))
+            return
+
+        intersection_roads = set()
+        intersection_features = {}
+        for feature in intersection_layer.getFeatures():
+            road_ids = self.split_ids(feature[intersection_fields["ROADS"]])
+            for road_id in road_ids:
+                intersection_roads.add(road_id)
+                intersection_features.setdefault(road_id, []).append(feature.id())
+
+        lane_by_id = {}
+        for feature in lane_layer.getFeatures():
+            lane_id = self.norm_id(feature[lane_fields["ID"]])
+            if lane_id:
+                lane_by_id[lane_id] = feature
+
+        node_to_lane_ids = defaultdict(list)
+        node_lane_seen = defaultdict(set)
+        for node_feature in lane_node_layer.getFeatures():
+            node_id = self.norm_id(node_feature[lane_node_fields["ID"]])
+            if not node_id:
+                continue
+            for related_id in self.split_ids(node_feature[lane_node_fields["LANES"]]):
+                if related_id not in node_lane_seen[node_id]:
+                    node_to_lane_ids[node_id].append(related_id)
+                    node_lane_seen[node_id].add(related_id)
+
+        records = []
+        for feature in lane_layer.getFeatures():
+            lane_id = self.norm_id(feature[lane_fields["ID"]]) or str(feature.id())
+            road_id = self.norm_id(feature[lane_fields["ROAD_ID"]])
+            virtual = self.to_int(feature[lane_fields["VIRTUAL"]])
+            is_intersection_lane = road_id in intersection_roads
+            if is_intersection_lane and virtual != 9:
+                selections = {lane_layer.id(): [feature.id()]}
+                related_intersections = intersection_features.get(road_id, [])
+                if related_intersections:
+                    selections[intersection_layer.id()] = related_intersections
+                records.append(
+                    {
+                        "type": "路口LANE与VIRTUAL检查",
+                        "message": "路口 LANE ID为 %s（ROAD_ID=%s）的 VIRTUAL 必须为9，当前为%s"
+                        % (lane_id, road_id, feature[lane_fields["VIRTUAL"]]),
+                        "selections": selections,
+                        "display_layers": {
+                            lane_layer.id(): lane_layer.name(),
+                            intersection_layer.id(): intersection_layer.name(),
+                        },
+                        "display_ids": {lane_layer.id(): [lane_id]},
+                    }
+                )
+            elif not is_intersection_lane:
+                lane_dir = self.to_int(feature[lane_fields["LANE_DIR"]])
+                current_end_node = self.norm_id(
+                    feature[lane_fields["FROM_NODE"]]
+                    if lane_dir == 2
+                    else feature[lane_fields["TO_NODE"]]
+                )
+                node_lane_ids = node_to_lane_ids.get(current_end_node, [])
+                next_lanes = [
+                    lane_by_id[related_id]
+                    for related_id in node_lane_ids
+                    if related_id != lane_id
+                    and related_id in lane_by_id
+                    and self.norm_id(
+                        lane_by_id[related_id][lane_fields["TO_NODE"]]
+                        if self.to_int(lane_by_id[related_id][lane_fields["LANE_DIR"]]) == 2
+                        else lane_by_id[related_id][lane_fields["FROM_NODE"]]
+                    ) == current_end_node
+                ]
+                has_intersection_next = any(
+                    self.norm_id(following[lane_fields["ROAD_ID"]]) in intersection_roads
+                    for following in next_lanes
+                )
+                if has_intersection_next:
+                    turn_types = {
+                        self.to_int(following[lane_fields["TURN_TYPE"]])
+                        for following in next_lanes
+                        if self.to_int(following[lane_fields["TURN_TYPE"]]) not in (None, 0)
+                    }
+                    expected_virtual = len(turn_types)
+                    reason = "下一条为路口LANE，下一条LANE的不同非零TURN_TYPE数量为%d" % expected_virtual
+                else:
+                    expected_virtual = 9
+                    reason = "没有下一条LANE或下一条不是路口 LANE"
+                if virtual != expected_virtual:
+                    records.append(
+                        {
+                            "type": "路口LANE与VIRTUAL检查",
+                            "message": "非路口 LANE ID为 %s 的 VIRTUAL 应为%d（%s），当前为%s"
+                            % (lane_id, expected_virtual, reason, feature[lane_fields["VIRTUAL"]]),
+                            "selections": {lane_layer.id(): [feature.id()]},
+                            "display_layers": {lane_layer.id(): lane_layer.name()},
+                            "display_ids": {lane_layer.id(): [lane_id]},
+                        }
+                    )
+        self.error_results.replace_records(records, "路口LANE与VIRTUAL检查")
+
     @staticmethod
     def is_empty(value):
         if value is None:
@@ -465,7 +620,7 @@ class LaneBatchUpdateTool:
         self.log_startup(lane_layer)
 
         lane_required = [
-            "ID", "TYPE", "ROAD_TYPE", "TURN_TYPE", "ROAD_ID", "SECTION_ID", "FROM_NODE", "TO_NODE", "SPEEDLIMIT",
+            "ID", "TYPE", "ROAD_TYPE", "TURN_TYPE", "ROAD_ID", "SECTION_ID", "LANE_DIR", "FROM_NODE", "TO_NODE", "SPEEDLIMIT",
         ]
         self.field_names, missing = self.resolve_field_map(lane_layer, lane_required)
         if missing:
@@ -1041,15 +1196,18 @@ class LaneBatchUpdateTool:
                 continue
             road_id = self.norm_id(self.feat_val(feat, "ROAD_ID"))
             turn_type = self.to_int(self.feat_val(feat, "TURN_TYPE"))
+            lane_dir = self.to_int(self.feat_val(feat, "LANE_DIR"))
             from_node = self.norm_id(self.feat_val(feat, "FROM_NODE"))
+            to_node = self.norm_id(self.feat_val(feat, "TO_NODE"))
+            travel_start_node = to_node if lane_dir == 2 else from_node
             in_inter = bool(road_id and road_id in inter_road_set)
 
             if turn_type == 0 or not in_inter:
                 straight_by_id[lane_id] = feat
             else:
                 turn_by_id[lane_id] = feat
-                if from_node:
-                    turn_by_from[from_node].append(feat)
+                if travel_start_node:
+                    turn_by_from[travel_start_node].append(feat)
             if road_id:
                 try:
                     if int(road_id) >= 0:

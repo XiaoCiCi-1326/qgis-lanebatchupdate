@@ -28,13 +28,22 @@ class ErrorResultsController:
         self.records = []
         self.right_straight_checker = None
         self.boundary_checker = None
+        self.speed_checker = None
+        self.virtual_checker = None
         self.clear_highlights_callback = None
 
     def configure_checkers(
-        self, right_straight_checker, boundary_checker, clear_highlights_callback
+        self,
+        right_straight_checker,
+        boundary_checker,
+        clear_highlights_callback,
+        speed_checker=None,
+        virtual_checker=None,
     ):
         self.right_straight_checker = right_straight_checker
         self.boundary_checker = boundary_checker
+        self.speed_checker = speed_checker
+        self.virtual_checker = virtual_checker
         self.clear_highlights_callback = clear_highlights_callback
 
     def replace_records(self, records, record_type, title=None):
@@ -171,6 +180,8 @@ class ErrorResultsDialog(QDialog):
         self.rules_list = QListWidget(page)
         self.right_straight_rule = self._add_rule("右转压直行")
         self.boundary_rule = self._add_rule("BOUNDARY长度检测")
+        self.speed_rule = self._add_rule("SPEEDLIMIT不能为空且不能为40")
+        self.virtual_rule = self._add_rule("路口LANE与VIRTUAL检查")
         self.rules_list.currentItemChanged.connect(self._update_rule_options)
         layout.addWidget(self.rules_list, 1)
 
@@ -311,6 +322,10 @@ class ErrorResultsDialog(QDialog):
             selected_rules.append(("右转压直行", self.controller.right_straight_checker))
         if self.boundary_rule.checkState() == Qt.Checked:
             selected_rules.append(("BOUNDARY长度检测", self.controller.boundary_checker))
+        if self.speed_rule.checkState() == Qt.Checked:
+            selected_rules.append(("SPEEDLIMIT不能为空且不能为40", self.controller.speed_checker))
+        if self.virtual_rule.checkState() == Qt.Checked:
+            selected_rules.append(("路口LANE与VIRTUAL检查", self.controller.virtual_checker))
         if not selected_rules:
             self._set_progress(0, "请至少选择一条规则。")
             self.rules_list.setFocus()
