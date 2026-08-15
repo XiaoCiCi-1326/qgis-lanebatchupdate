@@ -31,7 +31,9 @@ class BoundaryLengthController:
         self.dialog = None
         self.highlights = []
 
-    def initGui(self, actions_master):
+    def initGui(self, actions_master, register_action=True):
+        if not register_action:
+            return
         icon_path = os.path.join(self.plugin_dir, "icon_boundary_length.svg")
         self.action = QAction(QIcon(icon_path), "BOUNDARY长度筛选", self.iface.mainWindow())
         self.action.setToolTip("按 BOUNDARY 线要素长度筛选并高亮")
@@ -72,7 +74,7 @@ class BoundaryLengthController:
         self.dialog.raise_()
         self.dialog.activateWindow()
 
-    def apply_filter(self, operator, threshold, color):
+    def apply_filter(self, operator, threshold, color=None, highlight=False):
         layer = self._boundary_layer()
         if layer is None or layer.geometryType() != 1:
             return 0
@@ -91,11 +93,12 @@ class BoundaryLengthController:
                 continue
             if operator == "等于" and abs(length - threshold) > tolerance:
                 continue
-            highlight = QgsHighlight(self.iface.mapCanvas(), geometry, layer)
-            highlight.setColor(color)
-            highlight.setWidth(4)
-            highlight.show()
-            self.highlights.append(highlight)
+            if highlight:
+                highlight_item = QgsHighlight(self.iface.mapCanvas(), geometry, layer)
+                highlight_item.setColor(color or QColor("#e53935"))
+                highlight_item.setWidth(4)
+                highlight_item.show()
+                self.highlights.append(highlight_item)
             boundary_id = self._feature_id(feature)
             records.append(
                 {
@@ -113,7 +116,7 @@ class BoundaryLengthController:
             )
             matched += 1
         if self.error_results is not None:
-            self.error_results.replace_records(records, "BOUNDARY长度", "检测错误结果")
+            self.error_results.replace_records(records, "BOUNDARY长度")
         return matched
 
     @staticmethod
@@ -205,7 +208,7 @@ class BoundaryLengthDialog(QDialog):
     def apply(self):
         self._refresh_layer_info()
         count = self.controller.apply_filter(
-            self.operator.currentText(), self.threshold.value(), self.color
+            self.operator.currentText(), self.threshold.value(), self.color, highlight=True
         )
         self.result_label.setText("已高亮 %d 个 BOUNDARY 要素。" % count)
         self.controller.iface.mapCanvas().refresh()

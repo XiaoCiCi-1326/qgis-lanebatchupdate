@@ -39,6 +39,7 @@ RELEASE_FILES = (
     "icon_attribute_preset.svg",
     "icon_add_feature_preset.svg",
     "icon_boundary_length.svg",
+    "icon_error_results.svg",
     "lane_fix_excel.py",
     "lane_fix_engine.py",
     "lane_fix_controller.py",
@@ -130,7 +131,7 @@ def main():
 
     print("\n[2/3] 打包发布文件...")
     version = read_version()
-    stamp = datetime.now().strftime("%Y%m%d")
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_name = f"lanebatchupdate_v{version}_{stamp}"
     release_dir = PROJECT_ROOT / "release" / out_name
     zip_path = PROJECT_ROOT / "release" / f"{out_name}.zip"

@@ -35,7 +35,8 @@ class LaneBatchUpdateTool:
     MODE_VIRTUAL = "virtual"
     MODE_REMOVE_ALL = "remove_all"
     MODE_CHECK_RIGHT_STRAIGHT = "check_right_straight"
-    MODE_CLEAR_RIGHT_STRAIGHT = "clear_right_straight"
+    MODE_SHOW_ERROR_RESULTS = "show_error_results"
+    MODE_CLEAR_ALL_HIGHLIGHTS = "clear_all_highlights"
 
     def __init__(self, iface):
         self.iface = iface
@@ -54,14 +55,19 @@ class LaneBatchUpdateTool:
         self.attribute_preset = AttributePresetController(iface, self.plugin_dir)
         self.error_results = ErrorResultsController(iface)
         self.boundary_length = BoundaryLengthController(iface, self.plugin_dir, self.error_results)
+        self.error_results.configure_checkers(
+            self.run_check_right_straight_overlap,
+            self.boundary_length.apply_filter,
+            self.clear_all_highlights,
+        )
 
     def initGui(self):
         buttons = (
             (self.MODE_SPEED, "限速刷值", "icon_speed.png"),
             (self.MODE_SET_ROAD2, "ROAD_TYPE=2", "icon_road2.png"),
             (self.MODE_VIRTUAL, "转向个数刷值", "icon_virtual.png"),
-            (self.MODE_CHECK_RIGHT_STRAIGHT, "右转压直行检查", "icon_check_right_straight.svg"),
-            (self.MODE_CLEAR_RIGHT_STRAIGHT, "取消交点高亮", "icon_clear_right_straight.svg"),
+            (self.MODE_SHOW_ERROR_RESULTS, "全部规则", "icon_error_results.svg"),
+            (self.MODE_CLEAR_ALL_HIGHLIGHTS, "取消全部高亮", "icon_clear_right_straight.svg"),
             (self.MODE_REMOVE_ALL, "移除所有图层", "icon_remove_layers.svg"),
         )
         for mode, label, icon_name in buttons:
@@ -78,7 +84,7 @@ class LaneBatchUpdateTool:
         self.map_tile_snap.initGui(self.actions)
         self.lane_boundary_join.initGui(self.actions)
         self.attribute_preset.initGui(self.actions)
-        self.boundary_length.initGui(self.actions)
+        self.boundary_length.initGui(self.actions, register_action=False)
 
     def unload(self):
         self.clear_overlap_highlights()
@@ -108,6 +114,13 @@ class LaneBatchUpdateTool:
             except (AttributeError, RuntimeError):
                 pass
         self.overlap_highlights = []
+
+    def clear_all_highlights(self):
+        self.clear_overlap_highlights()
+        self.boundary_length.clear_highlights()
+
+    def show_error_results(self):
+        self.error_results.show("全部规则")
 
     @staticmethod
     def line_endpoints(geometry):
@@ -260,14 +273,22 @@ class LaneBatchUpdateTool:
                 for right_id, straight_ids in sorted(conflicts.items())
             ]
             if self.error_results is not None:
-                self.error_results.replace_records(records, "右转压直行", "检测错误结果")
-            QMessageBox.warning(
-                None,
-                "发现同类车道右转线与直行线有交叉",
-                f"已高亮交叉相关线（绿=右转，黄=直行）：\n\n{details}",
+                self.error_results.replace_records(records, "右转压直行")
+            self.iface.messageBar().pushMessage(
+                "车道工具",
+                "右转压直行检测完成：发现右转 %d 条、直行 %d 条。" % (
+                    len(conflicts), len(straight_ids)
+                ),
+                Qgis.Warning,
+                duration=8,
             )
         else:
-            QMessageBox.information(None, "同类车道交叉检查", "未发现同类车道中右转线与直行线有交叉。")
+            self.iface.messageBar().pushMessage(
+                "车道工具",
+                "右转压直行检测完成：未发现错误。",
+                Qgis.Info,
+                duration=6,
+            )
         canvas.refresh()
 
     @staticmethod
@@ -1148,8 +1169,14 @@ class LaneBatchUpdateTool:
             elif mode == self.MODE_CHECK_RIGHT_STRAIGHT:
                 self.run_check_right_straight_overlap()
                 return
-            elif mode == self.MODE_CLEAR_RIGHT_STRAIGHT:
-                self.clear_overlap_highlights()
+            elif mode == "boundary_length":
+                self.boundary_length.show()
+                return
+            elif mode == self.MODE_SHOW_ERROR_RESULTS:
+                self.show_error_results()
+                return
+            elif mode == self.MODE_CLEAR_ALL_HIGHLIGHTS:
+                self.clear_all_highlights()
                 self.iface.mapCanvas().refresh()
                 return
             else:

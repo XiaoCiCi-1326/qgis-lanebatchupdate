@@ -177,6 +177,7 @@ class NewFeatureDialog(QDialog):
         self.layer = layer
         self.feature = feature
         self.form = None
+        self._preset_attributes = {}
         self.preset_buttons = []
         self.preset_grid = None
         self.setWindowTitle(f"新增要素属性 - {layer.name()}")
@@ -246,18 +247,24 @@ class NewFeatureDialog(QDialog):
             for field_name, raw in values.items():
                 index = self.layer.fields().indexFromName(field_name)
                 if index >= 0:
-                    self.form.changeAttribute(field_name, self.controller._convert(self.layer.fields().at(index), raw))
+                    value = self.controller._convert(self.layer.fields().at(index), raw)
+                    # 新要素尚未加入图层，预设值需要直接同步到临时要素。
+                    self._preset_attributes[index] = value
+                    self.feature.setAttribute(index, value)
+                    self.form.changeAttribute(field_name, value)
         except (RuntimeError, ValueError) as exc:
             QMessageBox.warning(self, "加载预设失败", str(exc))
 
     def accept(self):
-        if hasattr(self.form, "save"):
-            save_result = self.form.save()
-            if save_result is False:
-                QMessageBox.warning(self, "新增失败", "无法保存属性表单中的修改。")
-                return
+        # 该表单绑定的是尚未加入图层的临时要素。
+        # QgsAttributeForm.save() 会尝试直接写入图层，不能与下面的 addFeature() 混用。
         updated_feature = self.form.feature()
+        if updated_feature is None:
+            QMessageBox.warning(self, "新增失败", "无法读取属性表单中的要素。")
+            return
         self.feature.setAttributes(updated_feature.attributes())
+        for index, value in self._preset_attributes.items():
+            self.feature.setAttribute(index, value)
         if self.layer.addFeature(self.feature):
             QSettings().setValue("LaneBatchUpdate/new_feature_dialog_size", self.size())
             super().accept()
