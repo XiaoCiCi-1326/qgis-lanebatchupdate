@@ -25,6 +25,8 @@ from .inertial_follow_controller import InertialFollowController
 from .map_tile_snap_controller import MapTileSnapController
 from .lane_boundary_join_controller import LaneBoundaryJoinController
 from .attribute_preset_controller import AttributePresetController
+from .boundary_length_controller import BoundaryLengthController
+from .error_results_controller import ErrorResultsController
 
 
 class LaneBatchUpdateTool:
@@ -50,6 +52,8 @@ class LaneBatchUpdateTool:
         self.map_tile_snap = MapTileSnapController(iface, self.plugin_dir)
         self.lane_boundary_join = LaneBoundaryJoinController(iface, self.plugin_dir)
         self.attribute_preset = AttributePresetController(iface, self.plugin_dir)
+        self.error_results = ErrorResultsController(iface)
+        self.boundary_length = BoundaryLengthController(iface, self.plugin_dir, self.error_results)
 
     def initGui(self):
         buttons = (
@@ -74,6 +78,7 @@ class LaneBatchUpdateTool:
         self.map_tile_snap.initGui(self.actions)
         self.lane_boundary_join.initGui(self.actions)
         self.attribute_preset.initGui(self.actions)
+        self.boundary_length.initGui(self.actions)
 
     def unload(self):
         self.clear_overlap_highlights()
@@ -88,6 +93,8 @@ class LaneBatchUpdateTool:
         self.map_tile_snap.unload()
         self.lane_boundary_join.unload()
         self.attribute_preset.unload()
+        self.boundary_length.unload()
+        self.error_results.unload()
 
     def clear_overlap_highlights(self):
         for highlight in self.overlap_highlights:
@@ -173,6 +180,7 @@ class LaneBatchUpdateTool:
         right_lanes = [feat for right, _ in lane_groups.values() for feat in right]
         straight_lanes = [feat for _, straight in lane_groups.values() for feat in straight]
         conflicts = {}
+        conflict_features = {}
         for lane_type, (group_right_lanes, group_straight_lanes) in lane_groups.items():
             for right_feat in group_right_lanes:
                 right_geometry = right_feat.geometry()
@@ -195,6 +203,7 @@ class LaneBatchUpdateTool:
                     right_id = self.norm_id(self.feat_val(right_feat, "ID"))
                     straight_id = self.norm_id(self.feat_val(straight_feat, "ID"))
                     conflicts.setdefault(right_id, set()).add(straight_id)
+                    conflict_features.setdefault(right_id, {"right": right_feat.id(), "straight": set()})["straight"].add(straight_feat.id())
 
         canvas = self.iface.mapCanvas()
         for right_feat in right_lanes:
@@ -227,6 +236,31 @@ class LaneBatchUpdateTool:
                 f"右转 {right_id} ↔ 直行 {', '.join(sorted(straight_ids))}"
                 for right_id, straight_ids in sorted(conflicts.items())
             )
+            records = [
+                {
+                    "type": "右转压直行",
+                    "message": "右转ID为 %s 压直行ID为 %s" % (
+                        right_id,
+                        ', '.join(sorted(straight_ids)),
+                    ),
+                    "selections": {
+                        lane_layer.id(): [
+                            conflict_features[right_id]["right"],
+                            *sorted(conflict_features[right_id]["straight"]),
+                        ]
+                    },
+                    "display_layers": {lane_layer.id(): lane_layer.name()},
+                    "display_ids": {
+                        lane_layer.id(): [
+                            right_id,
+                            *sorted(straight_ids),
+                        ]
+                    },
+                }
+                for right_id, straight_ids in sorted(conflicts.items())
+            ]
+            if self.error_results is not None:
+                self.error_results.replace_records(records, "右转压直行", "检测错误结果")
             QMessageBox.warning(
                 None,
                 "发现同类车道右转线与直行线有交叉",
