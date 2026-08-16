@@ -2,8 +2,9 @@
 """按图层保存并应用属性预设。"""
 import ast
 import json
+import math
 
-from qgis.PyQt.QtCore import QMimeData, QSettings, QTimer, Qt, pyqtSignal
+from qgis.PyQt.QtCore import QMimeData, QPoint, QSettings, QTimer, Qt, pyqtSignal
 from qgis.PyQt.QtGui import QDrag, QIcon, QColor
 from qgis.PyQt.QtWidgets import (
     QAction,
@@ -65,6 +66,7 @@ class AddFeatureMapTool(QgsMapTool):
         self.points = []
         self._paused = False
         self._cancelled = False
+        self.mode = getattr(controller, "shape_mode", "line")
         self.snap_indicator = QgsSnapIndicator(self.canvas)
         self.snap_indicator.setMatch(QgsPointLocator.Match())
         self.rubber_band = QgsRubberBand(self.canvas, layer.geometryType())
@@ -72,32 +74,308 @@ class AddFeatureMapTool(QgsMapTool):
         self.rubber_band.setColor(preview_color)
         self.rubber_band.setWidth(2)
         self.rubber_band.setVisible(True)
+        self.constraint_hint = QLabel(self.canvas)
+        self.constraint_hint.setStyleSheet(
+            "background: rgba(35, 35, 35, 210); color: white; "
+            "border: 1px solid #777; border-radius: 3px; padding: 2px 5px;"
+        )
+        self.constraint_hint.hide()
+
+    def set_mode(self, mode):
+        if self.points:
+            self.points.clear()
+        self.mode = mode or "line"
+        self._refresh_rubber_band()
+
+    def _required_control_count(self):
+        return {
+            "circle": 2,
+            "ellipse": 3,
+            "arc": 3,
+            "rectangle": 3,
+            "triangle": 2,
+            "regular_polygon": 2,
+        }.get(self.mode)
+
+    def _shape_points(self, cursor_point=None):
+        controls = list(self.points)
+        if cursor_point is not None:
+            controls.append(cursor_point)
+        if self.mode in ("line", "polygon"):
+            return controls
+        if self.mode in ("triangle", "regular_polygon"):
+            if len(controls) < 2:
+                return controls
+            center, vertex = controls[0], controls[1]
+            count = 3 if self.mode == "triangle" else self.controller.regular_polygon_sides
+            radius_x = vertex.x() - center.x()
+            radius_y = vertex.y() - center.y()
+            radius = math.hypot(radius_x, radius_y)
+            start_angle = math.atan2(radius_y, radius_x)
+            polygon_points = [
+                QgsPointXY(
+                    center.x() + radius * math.cos(start_angle + 2.0 * math.pi * i / count),
+                    center.y() + radius * math.sin(start_angle + 2.0 * math.pi * i / count),
+                )
+                for i in range(count)
+            ]
+            return polygon_points + [polygon_points[0]]
+        if self.mode == "rectangle":
+            if len(controls) < 2:
+                return controls
+            start, end = controls[0], controls[1]
+            base_x = end.x() - start.x()
+            base_y = end.y() - start.y()
+            base_length = math.hypot(base_x, base_y)
+            if base_length == 0.0 or len(controls) < 3:
+                return controls
+            width_point = controls[2]
+            normal_x = -base_y / base_length
+            normal_y = base_x / base_length
+            width = (width_point.x() - start.x()) * normal_x + (width_point.y() - start.y()) * normal_y
+            offset_x = normal_x * width
+            offset_y = normal_y * width
+            return [
+                start,
+                end,
+                QgsPointXY(end.x() + offset_x, end.y() + offset_y),
+                QgsPointXY(start.x() + offset_x, start.y() + offset_y),
+                start,
+            ]
+        if self.mode == "circle":
+            if len(controls) < 2:
+                return controls
+            center, edge = controls[0], controls[1]
+            radius = math.hypot(edge.x() - center.x(), edge.y() - center.y())
+            if radius == 0.0:
+                return [center]
+            return [
+                QgsPointXY(
+                    center.x() + radius * math.cos(2.0 * math.pi * i / 72.0),
+                    center.y() + radius * math.sin(2.0 * math.pi * i / 72.0),
+                )
+                for i in range(72)
+            ] + [QgsPointXY(center.x() + radius, center.y())]
+        if self.mode == "ellipse":
+            if len(controls) < 2:
+                return controls
+            center, axis = controls[0], controls[1]
+            axis_x = axis.x() - center.x()
+            axis_y = axis.y() - center.y()
+            major = math.hypot(axis_x, axis_y)
+            if len(controls) >= 3:
+                minor_point = controls[2]
+                normal_x = -axis_y / major if major else 0.0
+                normal_y = axis_x / major if major else 0.0
+                minor = abs((minor_point.x() - center.x()) * normal_x + (minor_point.y() - center.y()) * normal_y)
+            else:
+                minor = major
+            angle = math.atan2(axis_y, axis_x)
+            ellipse_points = [
+                QgsPointXY(
+                    center.x() + major * math.cos(t) * math.cos(angle) - minor * math.sin(t) * math.sin(angle),
+                    center.y() + major * math.cos(t) * math.sin(angle) + minor * math.sin(t) * math.cos(angle),
+                )
+                for t in (2.0 * math.pi * i / 72.0 for i in range(72))
+            ]
+            return ellipse_points + [ellipse_points[0]]
+        if self.mode == "arc":
+            if len(controls) < 3:
+                return controls
+            start, through, end = controls[:3]
+            denominator = 2.0 * ((start.x() - through.x()) * (through.y() - end.y()) + (through.x() - end.x()) * (end.y() - start.y()))
+            if abs(denominator) < 1e-12:
+                return controls
+            start_sq = start.x() ** 2 + start.y() ** 2
+            through_sq = through.x() ** 2 + through.y() ** 2
+            end_sq = end.x() ** 2 + end.y() ** 2
+            center_x = (start_sq * (through.y() - end.y()) + through_sq * (end.y() - start.y()) + end_sq * (start.y() - through.y())) / denominator
+            center_y = (start_sq * (end.x() - through.x()) + through_sq * (start.x() - end.x()) + end_sq * (through.x() - start.x())) / denominator
+            center = QgsPointXY(center_x, center_y)
+            angles = [math.atan2(point.y() - center.y(), point.x() - center.x()) for point in (start, through, end)]
+            start_angle, through_angle, end_angle = angles
+            ccw_span = (end_angle - start_angle) % (2.0 * math.pi)
+            through_span = (through_angle - start_angle) % (2.0 * math.pi)
+            if through_span <= ccw_span:
+                span = ccw_span
+            else:
+                span = ccw_span - 2.0 * math.pi
+            return [
+                QgsPointXY(
+                    center.x() + math.hypot(start.x() - center.x(), start.y() - center.y()) * math.cos(start_angle + span * i / 48.0),
+                    center.y() + math.hypot(start.x() - center.x(), start.y() - center.y()) * math.sin(start_angle + span * i / 48.0),
+                )
+                for i in range(49)
+            ]
+        return controls
+
+    def _shape_is_complete(self):
+        return {
+            "circle": len(self.points) >= 2,
+            "ellipse": len(self.points) >= 3,
+            "arc": len(self.points) >= 3,
+            "rectangle": len(self.points) >= 3,
+            "regular_polygon": len(self.points) >= 2,
+        }.get(self.mode, False)
 
     def canvasPressEvent(self, event):
         if event.button() == Qt.LeftButton:
-            self.points.append(self._map_point(event.pos()))
-            self._refresh_rubber_band()
+            shift_pressed = bool(event.modifiers() & Qt.ShiftModifier)
+            point = self._constrained_point(
+                self._map_point(event.pos(), allow_snap=not shift_pressed), shift_pressed
+            )
+            required_controls = self._required_control_count()
+            if required_controls is None or len(self.points) < required_controls:
+                self.points.append(point)
+                self._refresh_rubber_band()
         elif event.button() == Qt.RightButton:
             self._finish()
 
-    def _map_point(self, screen_pos):
-        snapping_config = QgsProject.instance().snappingConfig()
-        if snapping_config.enabled():
-            match = self.canvas.snappingUtils().snapToMap(screen_pos)
-            if match.isValid():
+    def _self_snap_point(self, screen_pos):
+        """普通绘制时，将光标吸附到当前要素的已有顶点或预览线。"""
+        if not self.points:
+            return None
+
+        snap_tolerance = 12.0
+        tolerance_sq = snap_tolerance * snap_tolerance
+        cursor_x = float(screen_pos.x())
+        cursor_y = float(screen_pos.y())
+        best_screen = None
+        best_point = None
+        best_type = None
+        best_distance_sq = tolerance_sq
+
+        def consider_vertex(point):
+            nonlocal best_screen, best_point, best_type, best_distance_sq
+            canvas_point = self.toCanvasCoordinates(point)
+            dx = float(canvas_point.x()) - cursor_x
+            dy = float(canvas_point.y()) - cursor_y
+            distance_sq = dx * dx + dy * dy
+            if distance_sq <= best_distance_sq:
+                best_screen = canvas_point
+                best_point = QgsPointXY(point)
+                best_type = QgsPointLocator.Vertex
+                best_distance_sq = distance_sq
+
+        for point in self.points:
+            consider_vertex(point)
+
+        segments = list(zip(self.points, self.points[1:]))
+        if self.layer.geometryType() == 2 and len(self.points) >= 3:
+            segments.append((self.points[-1], self.points[0]))
+        for start, end in segments:
+            start_screen = self.toCanvasCoordinates(start)
+            end_screen = self.toCanvasCoordinates(end)
+            segment_x = float(end_screen.x()) - float(start_screen.x())
+            segment_y = float(end_screen.y()) - float(start_screen.y())
+            segment_length_sq = segment_x * segment_x + segment_y * segment_y
+            if segment_length_sq == 0.0:
+                continue
+            factor = (
+                (cursor_x - float(start_screen.x())) * segment_x
+                + (cursor_y - float(start_screen.y())) * segment_y
+            ) / segment_length_sq
+            factor = max(0.0, min(1.0, factor))
+            projected_x = float(start_screen.x()) + factor * segment_x
+            projected_y = float(start_screen.y()) + factor * segment_y
+            dx = projected_x - cursor_x
+            dy = projected_y - cursor_y
+            distance_sq = dx * dx + dy * dy
+            if distance_sq < best_distance_sq:
+                best_screen = QPoint(round(projected_x), round(projected_y))
+                best_point = self.toMapCoordinates(best_screen)
+                best_type = QgsPointLocator.Edge
+                best_distance_sq = distance_sq
+
+        if best_screen is None:
+            return None
+        return best_point, QgsPointLocator.Match(best_type, self.layer, -1, 0.0, best_point)
+
+    def _map_point(self, screen_pos, allow_snap=True):
+        if allow_snap:
+            self_snap = self._self_snap_point(screen_pos)
+            if self_snap is not None:
+                point, match = self_snap
                 self.snap_indicator.setMatch(match)
-                return match.point()
+                return point
+            snapping_config = QgsProject.instance().snappingConfig()
+            if snapping_config.enabled():
+                match = self.canvas.snappingUtils().snapToMap(screen_pos)
+                if match.isValid():
+                    self.snap_indicator.setMatch(match)
+                    return match.point()
         self.snap_indicator.setMatch(QgsPointLocator.Match())
         return self.toMapCoordinates(screen_pos)
 
+    def _constrained_point(self, point, shift_pressed):
+        """Shift 下首段锁定八方向，后续段沿上一段的前向射线延长。"""
+        if not shift_pressed or not self.points:
+            return point
+
+        anchor = self.points[-1]
+        dx = point.x() - anchor.x()
+        dy = point.y() - anchor.y()
+        if len(self.points) == 1:
+            length = math.hypot(dx, dy)
+            if length == 0.0:
+                return anchor
+            angle = math.atan2(dy, dx)
+            snapped_angle = round(angle / (math.pi / 4.0)) * math.pi / 4.0
+            return QgsPointXY(
+                anchor.x() + length * math.cos(snapped_angle),
+                anchor.y() + length * math.sin(snapped_angle),
+            )
+
+        previous = self.points[-2]
+        direction_x = anchor.x() - previous.x()
+        direction_y = anchor.y() - previous.y()
+        direction_length_sq = direction_x * direction_x + direction_y * direction_y
+        if direction_length_sq == 0.0:
+            return anchor
+        distance = max(0.0, (dx * direction_x + dy * direction_y) / direction_length_sq)
+        return QgsPointXY(
+            anchor.x() + distance * direction_x,
+            anchor.y() + distance * direction_y,
+        )
+
+    def _constraint_hint_text(self, raw_point):
+        if len(self.points) >= 2:
+            return "沿上一段延长"
+        anchor = self.points[-1]
+        angle = math.degrees(math.atan2(raw_point.y() - anchor.y(), raw_point.x() - anchor.x()))
+        snapped_angle = int(round(angle / 45.0) * 45) % 360
+        return f"{snapped_angle}°"
+
+    def _show_constraint_hint(self, text, screen_pos):
+        self.constraint_hint.setText(text)
+        self.constraint_hint.adjustSize()
+        self.constraint_hint.move(screen_pos + QPoint(14, 14))
+        self.constraint_hint.show()
+        self.constraint_hint.raise_()
+
+    def _hide_constraint_hint(self):
+        self.constraint_hint.hide()
+
     def canvasMoveEvent(self, event):
-        cursor_point = self._map_point(event.pos())
+        shift_pressed = bool(event.modifiers() & Qt.ShiftModifier)
+        cursor_point = self._map_point(event.pos(), allow_snap=not shift_pressed)
         if self.points:
+            if shift_pressed:
+                self._show_constraint_hint(self._constraint_hint_text(cursor_point), event.pos())
+                cursor_point = self._constrained_point(cursor_point, True)
+            else:
+                self._hide_constraint_hint()
             self._refresh_rubber_band(cursor_point)
+        else:
+            self._hide_constraint_hint()
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
             self.cancel()
+        elif event.key() == Qt.Key_Backspace:
+            if self.points:
+                self.points.pop()
+                self._refresh_rubber_band()
         else:
             super().keyPressEvent(event)
 
@@ -107,9 +385,8 @@ class AddFeatureMapTool(QgsMapTool):
             self.layer = active_layer
             self.rubber_band.reset(self.layer.geometryType())
             self.rubber_band.setColor(QColor(255, 0, 0, 51 if self.layer.geometryType() == 2 else 255))
-        points = list(self.points)
-        if cursor_point is not None:
-            points.append(cursor_point)
+        points = self._shape_points(cursor_point)
+        self.rubber_band.reset(self.layer.geometryType())
         if self.layer.geometryType() == 0:
             if points:
                 self.rubber_band.setToGeometry(QgsGeometry.fromPointXY(points[-1]), self.layer.crs())
@@ -121,6 +398,7 @@ class AddFeatureMapTool(QgsMapTool):
             self.rubber_band.setToGeometry(QgsGeometry.fromPolygonXY([ring]), self.layer.crs())
 
     def _finish(self):
+        self._hide_constraint_hint()
         layer = self.controller.iface.activeLayer()
         if not isinstance(layer, QgsVectorLayer) or not layer.isValid():
             return
@@ -131,12 +409,17 @@ class AddFeatureMapTool(QgsMapTool):
             self.layer = layer
             self.rubber_band.reset(geometry_type)
             self.rubber_band.setColor(QColor(255, 0, 0, 51 if geometry_type == 2 else 255))
-        if (geometry_type == 0 and len(self.points) != 1) or (geometry_type in (1, 2) and len(self.points) < 2):
+        points = self._shape_points()
+        minimum_points = 2 if geometry_type == 1 else 3
+        if geometry_type == 0:
+            if len(points) != 1:
+                return
+        elif len(points) < minimum_points:
             return
         geometry = {
-            0: QgsGeometry.fromPointXY(self.points[0]),
-            1: QgsGeometry.fromPolylineXY(self.points),
-            2: QgsGeometry.fromPolygonXY([self.points + [self.points[0]]]),
+            0: QgsGeometry.fromPointXY(points[0]),
+            1: QgsGeometry.fromPolylineXY(points),
+            2: QgsGeometry.fromPolygonXY([points + [points[0]]]),
         }[geometry_type]
         self.controller.finish_add_feature(layer, geometry)
         if not self._cancelled:
@@ -148,6 +431,7 @@ class AddFeatureMapTool(QgsMapTool):
         if self._cancelled:
             return
         self._paused = True
+        self._hide_constraint_hint()
         self.snap_indicator.setMatch(QgsPointLocator.Match())
         self.rubber_band.setVisible(True)
 
@@ -162,6 +446,7 @@ class AddFeatureMapTool(QgsMapTool):
         if self._cancelled:
             return
         self._cancelled = True
+        self._hide_constraint_hint()
         self.points.clear()
         self.snap_indicator.setMatch(QgsPointLocator.Match())
         self.rubber_band.reset(self.layer.geometryType())
@@ -911,6 +1196,8 @@ class AttributePresetController:
         self.brush_tool = None
         self.add_feature_action = None
         self.add_feature_tool = None
+        self.shape_mode = "line"
+        self.shape_combo = None
 
     def initGui(self, actions):
         global _ACTIVE_CONTROLLER
@@ -919,6 +1206,17 @@ class AttributePresetController:
         preset_icon_path = f"{self.plugin_dir}/icon_attribute_preset.svg"
         add_feature_icon_path = f"{self.plugin_dir}/icon_add_feature_preset.svg"
         self.iface.mapCanvas().mapToolSet.connect(self._on_map_tool_set)
+        self.shape_combo = QComboBox()
+        self.shape_combo.setToolTip("添加要素形状")
+        for label, mode in (
+            ("普通线", "line"),
+            ("圆", "circle"),
+            ("椭圆", "ellipse"),
+            ("矩形", "rectangle"),
+        ):
+            self.shape_combo.addItem(label, mode)
+        self.shape_combo.currentIndexChanged.connect(self._shape_mode_changed)
+        self.iface.addVectorToolBarWidget(self.shape_combo)
         self.add_feature_action = QAction(QIcon(add_feature_icon_path), "添加要素", self.iface.mainWindow())
         self.add_feature_action.setCheckable(True)
         self.add_feature_action.setToolTip("点击开启绘制工具，再点击关闭")
@@ -944,6 +1242,9 @@ class AttributePresetController:
             pass
         self.stop_add_feature()
         self.stop_brush()
+        if self.shape_combo:
+            self.shape_combo.deleteLater()
+            self.shape_combo = None
         if self.dialog:
             self.dialog.close()
             self.dialog = None
@@ -1045,6 +1346,14 @@ class AttributePresetController:
         if layout:
             layout.insertWidget(max(0, layout.count() - 1), group)
 
+    def _regular_polygon_sides_changed(self, value):
+        return
+
+    def _shape_mode_changed(self, index):
+        self.shape_mode = self.shape_combo.itemData(index) if self.shape_combo else "line"
+        if self.add_feature_tool and not self.add_feature_tool._cancelled:
+            self.add_feature_tool.set_mode(self.shape_mode)
+
     def _on_map_tool_set(self, tool, _old_tool=None):
         if tool is not self.add_feature_tool and self.add_feature_tool is not None:
             self.add_feature_tool.pause()
@@ -1089,7 +1398,7 @@ class AttributePresetController:
         self.iface.mapCanvas().setMapTool(self.add_feature_tool)
         self.iface.messageBar().pushMessage(
             "添加要素（带属性预设）",
-            "左键绘制，右键结束；Esc 取消。",
+            "左键绘制，右键结束；Shift 显示方向约束；Backspace 删除最后一点；Esc 取消。",
             Qgis.Info,
             duration=6,
         )
