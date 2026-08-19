@@ -1039,14 +1039,18 @@ class LaneBatchUpdateTool:
 
             if lane_type == 2 and road_type == 2:
                 speed = self.cross_lane_speed(ctx, feat)
-            elif lane_type == 1:
+            elif lane_type == 1 and road_type == 2:
                 speed = 25
+            elif lane_type == 1 and road_type == 1:
+                speed = 15
+            elif lane_type == 1 and road_type == 3:
+                speed = 5
             elif lane_type == 4:
                 speed = 70
             elif lane_type == 2 and road_type == 1:
-                speed = 30
-            elif lane_type == 2 and road_type == 3:
                 speed = 15
+            elif lane_type == 2 and road_type == 3:
+                speed = 5
 
             if self.is_invalid_speed(speed):
                 self.log(
@@ -1096,17 +1100,23 @@ class LaneBatchUpdateTool:
             speed = None
             log_line = None
 
-            if lane_type == 1:
+            if lane_type == 1 and road_type == 2:
                 speed = 25
-                log_line = f"laneid={lane_id},speedlimit={speed}(type=1,roadtype={road_type})"
+                log_line = f"laneid={lane_id},speedlimit={speed}(type=1,roadtype=2)"
+            elif lane_type == 1 and road_type == 1:
+                speed = 15
+                log_line = f"laneid={lane_id},speedlimit={speed}(type=1,roadtype=1)"
+            elif lane_type == 1 and road_type == 3:
+                speed = 5
+                log_line = f"laneid={lane_id},speedlimit={speed}(type=1,roadtype=3)"
             elif lane_type == 4:
                 speed = 70
                 log_line = f"laneid={lane_id},speedlimit={speed}(type=4,roadtype={road_type})"
             elif lane_type == 2 and road_type == 1:
-                speed = 30
+                speed = 15
                 log_line = f"laneid={lane_id},speedlimit={speed}(type=2,roadtype=1)"
             elif lane_type == 2 and road_type == 3:
-                speed = 15
+                speed = 5
                 log_line = f"laneid={lane_id},speedlimit={speed}(type=2,roadtype=3)"
 
             if speed is not None:
