@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """按图层保存并应用属性预设。"""
-import ast
 import json
 import math
 
@@ -1152,7 +1151,7 @@ class AttributePresetController:
     EMPTY_PRESET_NAME = "空预设"
     LOG_TAG = "车道处理工具"
     BUILTIN_PRESETS = {
-        ("MESH", "ID", "COLOR", "TYPE", "LAYER_NUM", "UUID"): {
+        "BOUNDARY": {
             "单虚线": {"COLOR": "0", "TYPE": "1"},
             "双虚线": {"COLOR": "0", "TYPE": "2"},
             "单实线": {"COLOR": "0", "TYPE": "3"},
@@ -1165,16 +1164,12 @@ class AttributePresetController:
             "马路牙": {"COLOR": "15", "TYPE": "7"},
             "虚拟线": {"COLOR": "0", "TYPE": "9"},
         },
-        ("MESH", "ID", "TYPE", "LANES", "LAYER_NUM", "UUID"): {
+        "STOPLINE": {
             "红绿灯停止线": {"TYPE": "1"},
             "减速让行": {"TYPE": "2"},
             "停车让行": {"TYPE": "3"},
         },
-        ("MESH", "ID", "TYPE", "HEIGHT", "LAYER_NUM"): {
-            "绿化带": {"TYPE": "1", "HEIGHT": "95"},
-            "站台": {"TYPE": "2", "HEIGHT": "15"},
-        },
-        ("MESH", "ID", "LANE_DIR", "TYPE", "ROAD_TYPE", "SECTION_NO", "ROAD_ID", "TURN_TYPE", "SPEEDLIMIT", "SECTION_ID", "BDY_LEFT", "BDY_RIGHT", "WIDTH", "LENGTH", "RBDY_L", "RBDY_R", "FROM_NODE", "TO_NODE", "LANE_NUM", "LEFT_FWD", "RIGHT_FWD", "LEFT_RVS", "RIGHT_RVS", "SIGNALS", "LAYER_NUM", "UUID", "VIRTUAL", "ALLOW_DIRS", "MAP_TYPE"): {
+        "LANE": {
             "社会道路": {"ROAD_TYPE": "2"},
             "园区道路": {"ROAD_TYPE": "1"},
             "室内道路": {"ROAD_TYPE": "3"},
@@ -1186,6 +1181,13 @@ class AttributePresetController:
             "右后": {"TURN_TYPE": "6"},
             "左前": {"TURN_TYPE": "7"},
             "左后": {"TURN_TYPE": "8"},
+        },
+        "GATE": {
+            "道闸杆": {"TYPE": "0"},
+        },
+        "PROHIBITED_AREA": {
+            "绿化带": {"TYPE": "1", "HEIGHT": "95"},
+            "站台": {"TYPE": "2", "HEIGHT": "15"},
         },
     }
 
@@ -1450,8 +1452,18 @@ class AttributePresetController:
     def _layer_key(self, layer):
         if isinstance(layer, str):
             return layer
-        field_names = tuple(f.name() for f in layer.fields())
-        return f"fields:{field_names}"
+        return f"layer-name:{layer.name()}"
+
+    @staticmethod
+    def _instance_layer_key(layer):
+        return f"layer:{layer.id()}"
+
+    @staticmethod
+    def _field_signature(layer):
+        return tuple(field.name() for field in layer.fields())
+
+    def _legacy_layer_key(self, layer):
+        return f"fields:{self._field_signature(layer)}"
 
     @staticmethod
     def vector_layers():
@@ -1519,7 +1531,7 @@ class AttributePresetController:
         keys = [self.ALL_LAYERS_ID] + [
             self._layer_key(layer) for layer in self.vector_layers()
         ]
-        changed = False
+        changed = self._migrate_legacy_presets(data)
         for key in keys:
             if self.EMPTY_PRESET_NAME not in data.setdefault(key, {}):
                 data[key][self.EMPTY_PRESET_NAME] = {}
@@ -1527,18 +1539,40 @@ class AttributePresetController:
         if changed:
             self._write_all(data)
 
+    def _migrate_legacy_presets(self, data):
+        """将旧版字段结构键和图层 ID 键迁移为图层名称键。"""
+        changed = False
+        for layer in self.vector_layers():
+            target_key = self._layer_key(layer)
+            layer_presets = data.setdefault(target_key, {})
+            for source_key in (
+                self._legacy_layer_key(layer),
+                self._instance_layer_key(layer),
+            ):
+                source_presets = data.get(source_key)
+                if not source_presets:
+                    continue
+                for name, values in source_presets.items():
+                    if name not in layer_presets:
+                        layer_presets[name] = values
+                        changed = True
+                if source_key != target_key:
+                    data.pop(source_key, None)
+                    changed = True
+        obsolete_keys = [
+            key for key in data
+            if isinstance(key, str)
+            and (key.startswith("fields:") or key.startswith("layer:"))
+        ]
+        for key in obsolete_keys:
+            data.pop(key, None)
+            changed = True
+        return changed
+
     def _builtin_for(self, layer):
-        key = self._layer_key(layer)
-        if not isinstance(key, str) or not key.startswith("fields:"):
-            return {}
-        try:
-            field_names = tuple(json.loads(key[7:]))
-        except (TypeError, ValueError):
-            try:
-                field_names = tuple(ast.literal_eval(key[7:]))
-            except (TypeError, ValueError, SyntaxError):
-                return {}
-        return self.BUILTIN_PRESETS.get(field_names, {})
+        if isinstance(layer, str):
+            return self.BUILTIN_PRESETS.get(layer, {})
+        return self.BUILTIN_PRESETS.get(layer.name(), {})
 
     def preset_names(self, layer):
         self.ensure_empty_presets()
@@ -1602,7 +1636,9 @@ class AttributePresetController:
 
     @staticmethod
     def _convert(field, raw):
-        if raw == "":
+        if raw is None or raw is NULL or (
+            isinstance(raw, str) and raw.strip().lower() in ("", "null")
+        ):
             return NULL
         field_type = field.typeName().lower()
         try:

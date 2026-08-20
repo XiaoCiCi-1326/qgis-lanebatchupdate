@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import os
 
+from qgis.PyQt.QtCore import QEvent, QObject, QSettings
 from qgis.PyQt.QtGui import QIcon
-from qgis.PyQt.QtWidgets import QAction, QMessageBox
+from qgis.PyQt.QtWidgets import QAction, QInputDialog, QMessageBox
 from qgis.core import (
     Qgis,
     QgsCoordinateTransform,
@@ -16,13 +17,41 @@ from qgis.core import (
 )
 
 
-class MapTileSnapController:
+class MapTileSnapController(QObject):
     """只处理当前激活图层中选中的线要素。"""
 
     def __init__(self, iface, plugin_dir):
+        super().__init__(iface.mainWindow())
         self.iface = iface
         self.plugin_dir = plugin_dir
         self.action = None
+        self.settings = QSettings()
+        self.distance_key = "LaneBatchUpdate/mapTileSnapDistance"
+        self.distance_limit = self._load_distance_limit()
+
+    def _load_distance_limit(self):
+        try:
+            return max(0.0, float(self.settings.value(self.distance_key, 10.0)))
+        except (TypeError, ValueError):
+            return 10.0
+
+    def _set_distance_limit(self):
+        value, accepted = QInputDialog.getDouble(
+            self.iface.mainWindow(), "设置 MAP_TILE 吸附范围", "附近范围（米）",
+            self.distance_limit, 0.0, 1e9, 2
+        )
+        if accepted:
+            self.distance_limit = value
+            self.settings.setValue(self.distance_key, value)
+            self.iface.messageBar().pushMessage(
+                "车道工具", f"MAP_TILE 吸附范围已设置为 {value:g} 米。", Qgis.Info, duration=4
+            )
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.MouseButtonDblClick:
+            self._set_distance_limit()
+            return True
+        return False
 
     def initGui(self, actions_master):
         icon_path = os.path.join(self.plugin_dir, "icon_map_tile_snap.svg")
@@ -32,11 +61,19 @@ class MapTileSnapController:
         )
         self.action.triggered.connect(self.snap_selected)
         self.iface.addVectorToolBarIcon(self.action)
+        toolbar = self.iface.vectorToolBar()
+        button = toolbar.widgetForAction(self.action) if toolbar is not None else None
+        if button is not None:
+            button.installEventFilter(self)
         self.iface.addPluginToVectorMenu("车道处理工具", self.action)
         actions_master.append(self.action)
 
     def unload(self):
         if self.action is not None:
+            toolbar = self.iface.vectorToolBar()
+            button = toolbar.widgetForAction(self.action) if toolbar is not None else None
+            if button is not None:
+                button.removeEventFilter(self)
             self.iface.removeVectorToolBarIcon(self.action)
             self.iface.removePluginFromVectorMenu("车道处理工具", self.action)
         self.action = None
@@ -111,6 +148,45 @@ class MapTileSnapController:
                     best_point = candidate
         return best_point, best_distance_sq
 
+    @staticmethod
+    def _crossing_position(line_geometry, boundary_geometry, endpoint_index, tolerance):
+        intersections = line_geometry.intersection(boundary_geometry)
+        if intersections is None or intersections.isEmpty():
+            return None
+        positions = []
+        for point in intersections.vertices():
+            position = line_geometry.lineLocatePoint(QgsGeometry.fromPointXY(QgsPointXY(point)))
+            if position >= 0:
+                positions.append(position)
+        if not positions:
+            return None
+        length = line_geometry.length()
+        positions = [p for p in positions if tolerance < p < length - tolerance]
+        if not positions:
+            return None
+        return min(positions) if endpoint_index == 0 else max(positions)
+
+    @staticmethod
+    def _truncated_geometry(line_geometry, crossing_position, endpoint_index, tolerance):
+        vertices = [QgsPointXY(point) for point in line_geometry.vertices()]
+        travelled = 0.0
+        for index, (start, end) in enumerate(zip(vertices, vertices[1:])):
+            segment_length = start.distance(end)
+            if segment_length <= tolerance:
+                continue
+            if travelled + segment_length + tolerance < crossing_position:
+                travelled += segment_length
+                continue
+            ratio = max(0.0, min(1.0, (crossing_position - travelled) / segment_length))
+            crossing = QgsPointXY(
+                start.x() + (end.x() - start.x()) * ratio,
+                start.y() + (end.y() - start.y()) * ratio,
+            )
+            retained = ([crossing] + vertices[index + 1:]) if endpoint_index == 0 else (vertices[:index + 1] + [crossing])
+            result = QgsGeometry.fromPolylineXY(retained)
+            return result if not result.isEmpty() and result.length() > tolerance else None
+        return None
+
     def snap_selected(self):
         target_layer = self.iface.activeLayer()
         if not isinstance(target_layer, QgsVectorLayer):
@@ -140,6 +216,13 @@ class MapTileSnapController:
 
         canvas = self.iface.mapCanvas()
         tolerance = canvas.mapSettings().mapUnitsPerPixel() * 0.01
+        distance_limit_sq = self.distance_limit * self.distance_limit
+        boundary_geometry = QgsGeometry.unaryUnion(
+            [QgsGeometry.fromPolylineXY(ring) for ring in boundary_rings]
+        )
+        if boundary_geometry.isEmpty():
+            QMessageBox.warning(self.iface.mainWindow(), "范围框无效", "无法构造 MAP_TILE 边界线。")
+            return
         if not target_layer.isEditable() and not target_layer.startEditing():
             QMessageBox.warning(self.iface.mainWindow(), "无法编辑", f"无法开启 {target_layer.name()} 图层编辑。")
             return
@@ -170,11 +253,22 @@ class MapTileSnapController:
                         nearest_distance_sq = distance_sq
                         nearest_vertex_index = vertex_index
                         nearest_point = point
-                # 每个选中线要素只移动距离 MAP_TILE 最近的一个端点。
+                # 只处理最近端点在配置范围内的要素，避免远距离误吸附。
+                if nearest_vertex_index < 0 or nearest_point is None or nearest_distance_sq > distance_limit_sq:
+                    continue
+                crossing_position = self._crossing_position(
+                    geometry, boundary_geometry, nearest_vertex_index, tolerance
+                )
+                if crossing_position is not None:
+                    new_geometry = self._truncated_geometry(
+                        geometry, crossing_position, nearest_vertex_index, tolerance
+                    )
+                    if new_geometry is not None and target_layer.changeGeometry(feature_id, new_geometry):
+                        changed += 1
+                        vertices_changed += 1
+                    continue
                 feature_changed = (
-                    nearest_vertex_index >= 0
-                    and nearest_point is not None
-                    and nearest_distance_sq > tolerance * tolerance
+                    nearest_distance_sq > tolerance * tolerance
                     and new_geometry.moveVertex(
                         nearest_point.x(), nearest_point.y(), nearest_vertex_index
                     )
@@ -192,11 +286,11 @@ class MapTileSnapController:
             canvas.refresh()
             self.iface.messageBar().pushMessage(
                 "车道工具",
-                f"已处理 {changed} 个选中要素，吸附/拉回 {vertices_changed} 个顶点；修改已进入编辑会话，可撤销。",
+                f"已处理 {changed} 个选中要素，吸附/截断 {vertices_changed} 个；范围 {self.distance_limit:g} 米，修改已进入编辑会话，可撤销。",
                 level=Qgis.Info,
                 duration=6,
             )
         else:
             self.iface.messageBar().pushMessage(
-                "车道工具", "选中要素无需调整。", level=Qgis.Info, duration=4
+                "车道工具", f"附近 {self.distance_limit:g} 米内没有可以吸附的 MAP_TILE 边界。", level=Qgis.Warning, duration=6
             )

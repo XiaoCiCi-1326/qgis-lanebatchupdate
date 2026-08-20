@@ -11,10 +11,11 @@
 """
 from qgis.PyQt.QtGui import QIcon, QColor
 from qgis.PyQt.QtWidgets import QAction, QMessageBox
-from qgis.core import QgsProject, Qgis, QgsFeatureRequest, QgsVectorLayer
+from qgis.core import QgsProject, Qgis, QgsCoordinateTransform, QgsFeatureRequest, QgsSpatialIndex, QgsVectorLayer, QgsWkbTypes
 from qgis.gui import QgsHighlight
 from collections import defaultdict
 from datetime import datetime
+import math
 import os
 import re
 
@@ -23,6 +24,7 @@ from .excel_preview_controller import ExcelPreviewController
 from .reconstruct_controller import ReconstructController
 from .inertial_follow_controller import InertialFollowController
 from .map_tile_snap_controller import MapTileSnapController
+from .lane_stopline_snap_controller import LaneStoplineSnapController
 from .lane_boundary_join_controller import LaneBoundaryJoinController
 from .attribute_preset_controller import AttributePresetController
 from .boundary_length_controller import BoundaryLengthController
@@ -51,6 +53,7 @@ class LaneBatchUpdateTool:
         self.excel_preview = ExcelPreviewController(iface, self.plugin_dir, self.log)
         self.inertial_follow = InertialFollowController(iface, self.plugin_dir)
         self.map_tile_snap = MapTileSnapController(iface, self.plugin_dir)
+        self.lane_stopline_snap = LaneStoplineSnapController(iface, self.plugin_dir)
         self.lane_boundary_join = LaneBoundaryJoinController(iface, self.plugin_dir)
         self.attribute_preset = AttributePresetController(iface, self.plugin_dir)
         self.error_results = ErrorResultsController(iface)
@@ -61,6 +64,10 @@ class LaneBatchUpdateTool:
             self.clear_all_highlights,
             self.run_check_speedlimit,
             self.run_check_virtual,
+            self.run_check_duplicate_vertices,
+            self.run_check_extra_boundary_endpoints,
+            self.run_check_dangling_points,
+            self.run_check_overlapping_lines,
         )
 
     def initGui(self):
@@ -84,6 +91,7 @@ class LaneBatchUpdateTool:
         self.excel_preview.initGui(self.actions)
         self.inertial_follow.initGui(self.actions)
         self.map_tile_snap.initGui(self.actions)
+        self.lane_stopline_snap.initGui(self.actions)
         self.lane_boundary_join.initGui(self.actions)
         self.attribute_preset.initGui(self.actions)
         self.boundary_length.initGui(self.actions, register_action=False)
@@ -99,6 +107,7 @@ class LaneBatchUpdateTool:
         self.excel_preview.unload()
         self.inertial_follow.unload()
         self.map_tile_snap.unload()
+        self.lane_stopline_snap.unload()
         self.lane_boundary_join.unload()
         self.attribute_preset.unload()
         self.boundary_length.unload()
@@ -320,6 +329,338 @@ class LaneBatchUpdateTool:
                 }
             )
         self.error_results.replace_records(records, "SPEEDLIMIT检查")
+
+    def run_check_extra_boundary_endpoints(self, short_segment_only=False, short_segment_threshold=0.0):
+        """查找 TYPE 和 COLOR 一致、在端点相接的多个 BOUNDARY 要素。"""
+        layer = self.get_project_layer("BOUNDARY")
+        record_type = "BOUNDARY多余端点检查"
+        if layer is None or layer.geometryType() != 1:
+            QMessageBox.critical(None, "图层缺失", "请在 QGIS 中加载线类型 BOUNDARY 图层")
+            self.error_results.replace_records([], record_type)
+            return
+
+        fields, missing = self.resolve_field_map(layer, ["TYPE", "COLOR"])
+        if missing:
+            QMessageBox.critical(None, "字段缺失", "BOUNDARY 缺少字段：%s" % ", ".join(missing))
+            self.error_results.replace_records([], record_type)
+            return
+
+        tolerance = 1e-6
+        clusters = self._endpoint_clusters(self._line_endpoint_entries(layer), tolerance)
+        records = []
+        for cluster in clusters:
+            by_attributes = defaultdict(list)
+            for entry in cluster:
+                feature = entry["feature"]
+                attribute_key = (
+                    str(feature[fields["TYPE"]]).strip(),
+                    str(feature[fields["COLOR"]]).strip(),
+                )
+                by_attributes[attribute_key].append(entry)
+            for (type_value, color_value), entries in by_attributes.items():
+                features = {entry["feature"].id(): entry["feature"] for entry in entries}
+                if len(features) < 2:
+                    continue
+                feature_list = list(features.values())
+                if short_segment_only and not any(
+                    feature.geometry().length() < short_segment_threshold
+                    for feature in feature_list
+                ):
+                    continue
+                location = cluster[0]["point"]
+                feature_ids = [self._quality_feature_id(feature) for feature in feature_list]
+                records.append({
+                    "type": record_type,
+                    "message": "BOUNDARY 在端点处连接了 %d 个 TYPE=%s、COLOR=%s 一致的要素，可能存在多余断点" % (
+                        len(feature_list), type_value, color_value
+                    ),
+                    "selections": {layer.id(): [feature.id() for feature in feature_list]},
+                    "display_layers": {layer.id(): layer.name()},
+                    "display_ids": {layer.id(): feature_ids},
+                    "location": (location.x(), location.y()),
+                })
+        self.error_results.replace_records(records, record_type)
+        text = "%s完成：发现 %d 处可能的多余断点。" % (record_type, len(records))
+        self.iface.messageBar().pushMessage("车道工具", text, Qgis.Warning if records else Qgis.Info, duration=8)
+
+    def run_check_dangling_points(self):
+        """检查 BOUNDARY 和 LANE 的每个线部件端点是否贴合另一根线的端点。"""
+        record_type = "BOUNDARY/LANE悬挂点检查"
+        layers = []
+        for name in ("BOUNDARY", "LANE"):
+            layer = self.get_project_layer(name)
+            if layer is not None and layer.geometryType() == 1:
+                layers.append(layer)
+        if not layers:
+            QMessageBox.critical(None, "图层缺失", "请在 QGIS 中加载 BOUNDARY 或 LANE 线图层")
+            self.error_results.replace_records([], record_type)
+            return
+
+        tolerance = 1e-6
+        records = []
+        for layer in layers:
+            layer_entries = self._line_endpoint_entries(layer)
+            for entry in layer_entries:
+                matches = [
+                    other for other in layer_entries
+                    if other is not entry
+                    and other["feature"].id() != entry["feature"].id()
+                    and self._points_close(entry["point"], other["point"], tolerance)
+                ]
+                if matches:
+                    continue
+                feature = entry["feature"]
+                feature_id = self._quality_feature_id(feature)
+                point = entry["point"]
+                records.append({
+                    "type": record_type,
+                    "message": "%s 要素 ID=%s 的%s端点未贴合其他线端点" % (layer.name(), feature_id, entry["end_name"]),
+                    "selections": {layer.id(): [feature.id()]},
+                    "display_layers": {layer.id(): layer.name()},
+                    "display_ids": {layer.id(): [feature_id]},
+                    "location": (point.x(), point.y()),
+                })
+        self.error_results.replace_records(records, record_type)
+        text = "%s完成：发现 %d 个悬挂点。" % (record_type, len(records))
+        self.iface.messageBar().pushMessage("车道工具", text, Qgis.Warning if records else Qgis.Info, duration=8)
+
+    def run_check_overlapping_lines(self, check_minimum_length=True, minimum_length=0.0, check_exact=True):
+        """检查 BOUNDARY 和 LANE 图层内相互重合的线要素。"""
+        record_type = "BOUNDARY/LANE重合线检查"
+        if not check_minimum_length and not check_exact:
+            self.error_results.replace_records([], record_type)
+            self.iface.messageBar().pushMessage(
+                "车道工具", "请至少启用重合长度或完全重合条件。", Qgis.Warning, duration=8
+            )
+            return
+
+        layers = []
+        for name in ("BOUNDARY", "LANE"):
+            layer = self.get_project_layer(name)
+            if layer is not None and layer.geometryType() == QgsWkbTypes.LineGeometry:
+                layers.append(layer)
+        if not layers:
+            QMessageBox.critical(None, "图层缺失", "请在 QGIS 中加载 BOUNDARY 或 LANE 线图层")
+            self.error_results.replace_records([], record_type)
+            return
+
+        tolerance = 1e-6
+        records = []
+        for layer in layers:
+            features = {}
+            spatial_index = QgsSpatialIndex()
+            for feature in layer.getFeatures():
+                geometry = feature.geometry()
+                if geometry is None or geometry.isEmpty() or geometry.length() <= tolerance:
+                    continue
+                features[feature.id()] = feature
+                spatial_index.addFeature(feature)
+
+            seen_pairs = set()
+            for feature_id, feature in features.items():
+                geometry = feature.geometry()
+                for candidate_id in spatial_index.intersects(geometry.boundingBox()):
+                    if candidate_id == feature_id:
+                        continue
+                    pair = tuple(sorted((feature_id, candidate_id)))
+                    if pair in seen_pairs or candidate_id not in features:
+                        continue
+                    seen_pairs.add(pair)
+                    other = features[candidate_id]
+                    other_geometry = other.geometry()
+                    try:
+                        overlap_geometry = geometry.intersection(other_geometry)
+                    except Exception:
+                        continue
+                    if overlap_geometry is None or overlap_geometry.isEmpty():
+                        continue
+                    overlap_length = overlap_geometry.length()
+                    if overlap_length <= tolerance:
+                        continue
+                    feature_length = geometry.length()
+                    other_length = other_geometry.length()
+                    fully_overlapped = (
+                        abs(overlap_length - feature_length) <= tolerance
+                        and abs(overlap_length - other_length) <= tolerance
+                    )
+                    matched_minimum = check_minimum_length and overlap_length >= minimum_length
+                    if not (matched_minimum or (check_exact and fully_overlapped)):
+                        continue
+                    try:
+                        point = overlap_geometry.centroid().asPoint()
+                        location = (point.x(), point.y())
+                    except Exception:
+                        location = None
+                    first_display_id = self._quality_feature_id(feature)
+                    second_display_id = self._quality_feature_id(other)
+                    description = "完全重合" if fully_overlapped else "重合长度 %.6f 米" % overlap_length
+                    records.append({
+                        "type": record_type,
+                        "message": "%s 的要素 ID=%s 与 ID=%s %s" % (
+                            layer.name(), first_display_id, second_display_id, description
+                        ),
+                        "selections": {layer.id(): [feature_id, candidate_id]},
+                        "display_layers": {layer.id(): layer.name()},
+                        "display_ids": {layer.id(): [first_display_id, second_display_id]},
+                        "location": location,
+                    })
+        self.error_results.replace_records(records, record_type)
+        text = "%s完成：发现 %d 组重合线。" % (record_type, len(records))
+        self.iface.messageBar().pushMessage("车道工具", text, Qgis.Warning if records else Qgis.Info, duration=8)
+
+    @staticmethod
+    def _quality_feature_id(feature):
+        names = {field.name().upper(): field.name() for field in feature.fields()}
+        field_name = names.get("ID")
+        value = feature[field_name] if field_name else None
+        return LaneBatchUpdateTool.norm_id(value) or str(feature.id())
+
+    @staticmethod
+    def _line_endpoint_entries(layer):
+        entries = []
+        for feature in layer.getFeatures():
+            geometry = feature.geometry()
+            if geometry is None or geometry.isEmpty():
+                continue
+            parts = geometry.asMultiPolyline() if geometry.isMultipart() else [geometry.asPolyline()]
+            for part_number, vertices in enumerate(parts, 1):
+                if len(vertices) < 2:
+                    continue
+                entries.append({"layer": layer, "feature": feature, "point": vertices[0], "inner": vertices[1], "end_name": "起点", "part": part_number})
+                entries.append({"layer": layer, "feature": feature, "point": vertices[-1], "inner": vertices[-2], "end_name": "终点", "part": part_number})
+        return entries
+
+    @staticmethod
+    def _points_close(first, second, tolerance):
+        return math.hypot(first.x() - second.x(), first.y() - second.y()) <= tolerance
+
+    @staticmethod
+    def _endpoint_clusters(entries, tolerance):
+        clusters = []
+        for entry in entries:
+            cluster = next((items for items in clusters if LaneBatchUpdateTool._points_close(entry["point"], items[0]["point"], tolerance)), None)
+            if cluster is None:
+                clusters.append([entry])
+            else:
+                cluster.append(entry)
+        return clusters
+
+    @staticmethod
+    def _same_non_geometry_attributes(first, second):
+        for field in first.fields():
+            name = field.name().upper()
+            if name in ("ID", "FID", "OBJECTID", "SHAPE_LENGTH", "SHAPE_AREA"):
+                continue
+            if str(first[field.name()]).strip() != str(second[field.name()]).strip():
+                return False
+        return True
+
+    @staticmethod
+    def _endpoint_directions_are_continuous(first, second):
+        first_dx = first["inner"].x() - first["point"].x()
+        first_dy = first["inner"].y() - first["point"].y()
+        second_dx = second["inner"].x() - second["point"].x()
+        second_dy = second["inner"].y() - second["point"].y()
+        first_length = math.hypot(first_dx, first_dy)
+        second_length = math.hypot(second_dx, second_dy)
+        if first_length == 0 or second_length == 0:
+            return False
+        dot = (first_dx * second_dx + first_dy * second_dy) / (first_length * second_length)
+        return dot <= -math.cos(math.radians(20))
+
+    def run_check_duplicate_vertices(self):
+        """检查全部矢量图层中同一几何部件内的重复顶点。"""
+        records = []
+        canvas_crs = self.iface.mapCanvas().mapSettings().destinationCrs()
+        for layer in QgsProject.instance().mapLayers().values():
+            if not isinstance(layer, QgsVectorLayer):
+                continue
+            id_index = layer.fields().indexFromName("ID")
+            if id_index < 0:
+                id_index = next(
+                    (
+                        index
+                        for index, field in enumerate(layer.fields())
+                        if field.name().upper() == "ID"
+                    ),
+                    -1,
+                )
+            transform = None
+            if layer.crs() != canvas_crs:
+                try:
+                    transform = QgsCoordinateTransform(
+                        layer.crs(), canvas_crs, QgsProject.instance()
+                    )
+                except Exception:
+                    transform = None
+            for feature in layer.getFeatures():
+                geometry = feature.geometry()
+                if geometry is None or geometry.isEmpty():
+                    continue
+                feature_id = self.norm_id(feature[id_index]) if id_index >= 0 else ""
+                feature_id = feature_id or str(feature.id())
+                for part_number, vertices in enumerate(
+                    self._geometry_vertex_parts(geometry), 1
+                ):
+                    seen = {}
+                    for vertex_number, point in enumerate(vertices, 1):
+                        key = (point.x(), point.y())
+                        first_vertex = seen.get(key)
+                        if first_vertex is None:
+                            seen[key] = vertex_number
+                            continue
+                        location = point
+                        if transform is not None:
+                            try:
+                                location = transform.transform(point)
+                            except Exception:
+                                location = point
+                        records.append(
+                            {
+                                "type": "重复顶点检查",
+                                "message": (
+                                    "%s 的要素 ID=%s，第%d部分顶点%d 与顶点%d重复，坐标=(%.8f, %.8f)"
+                                    % (
+                                        layer.name(),
+                                        feature_id,
+                                        part_number,
+                                        vertex_number,
+                                        first_vertex,
+                                        point.x(),
+                                        point.y(),
+                                    )
+                                ),
+                                "selections": {layer.id(): [feature.id()]},
+                                "display_layers": {layer.id(): layer.name()},
+                                "display_ids": {layer.id(): [feature_id]},
+                                "location": (location.x(), location.y()),
+                            }
+                        )
+        self.error_results.replace_records(records, "重复顶点检查")
+        level = Qgis.Warning if records else Qgis.Info
+        text = "重复顶点检查完成：发现 %d 个重复顶点。" % len(records)
+        if not records:
+            text = "重复顶点检查完成：未发现重复顶点。"
+        self.iface.messageBar().pushMessage("车道工具", text, level, duration=8)
+
+    @staticmethod
+    def _geometry_vertex_parts(geometry):
+        """返回逐个独立几何部件或面环的顶点，排除合法面环闭合点。"""
+        geometry_type = geometry.type()
+        if geometry_type == QgsWkbTypes.PointGeometry:
+            points = geometry.asMultiPoint() if geometry.isMultipart() else [geometry.asPoint()]
+            return [[point] for point in points]
+        if geometry_type == QgsWkbTypes.LineGeometry:
+            return geometry.asMultiPolyline() if geometry.isMultipart() else [geometry.asPolyline()]
+        polygons = geometry.asMultiPolygon() if geometry.isMultipart() else [geometry.asPolygon()]
+        parts = []
+        for polygon in polygons:
+            for ring in polygon:
+                vertices = list(ring)
+                if len(vertices) > 1 and vertices[0] == vertices[-1]:
+                    vertices.pop()
+                parts.append(vertices)
+        return parts
 
     def run_check_virtual(self):
         lane_layer = self.get_project_layer("LANE")

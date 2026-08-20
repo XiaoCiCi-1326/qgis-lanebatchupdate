@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 """管理检测规则并显示错误记录。"""
 from qgis.PyQt.QtCore import QSettings, Qt
+from qgis.PyQt.QtGui import QColor
 from qgis.PyQt.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QDialog,
     QDoubleSpinBox,
@@ -18,7 +20,15 @@ from qgis.PyQt.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from qgis.core import QgsProject, QgsRectangle, QgsVectorLayer
+from qgis.core import (
+    QgsGeometry,
+    QgsPointXY,
+    QgsProject,
+    QgsRectangle,
+    QgsVectorLayer,
+    QgsWkbTypes,
+)
+from qgis.gui import QgsRubberBand
 
 
 class ErrorResultsController:
@@ -30,7 +40,12 @@ class ErrorResultsController:
         self.boundary_checker = None
         self.speed_checker = None
         self.virtual_checker = None
+        self.duplicate_vertex_checker = None
+        self.extra_endpoint_checker = None
+        self.dangling_point_checker = None
+        self.overlapping_line_checker = None
         self.clear_highlights_callback = None
+        self.location_marker = None
 
     def configure_checkers(
         self,
@@ -39,11 +54,19 @@ class ErrorResultsController:
         clear_highlights_callback,
         speed_checker=None,
         virtual_checker=None,
+        duplicate_vertex_checker=None,
+        extra_endpoint_checker=None,
+        dangling_point_checker=None,
+        overlapping_line_checker=None,
     ):
         self.right_straight_checker = right_straight_checker
         self.boundary_checker = boundary_checker
         self.speed_checker = speed_checker
         self.virtual_checker = virtual_checker
+        self.duplicate_vertex_checker = duplicate_vertex_checker
+        self.extra_endpoint_checker = extra_endpoint_checker
+        self.dangling_point_checker = dangling_point_checker
+        self.overlapping_line_checker = overlapping_line_checker
         self.clear_highlights_callback = clear_highlights_callback
 
     def replace_records(self, records, record_type, title=None):
@@ -63,6 +86,7 @@ class ErrorResultsController:
 
     def clear(self):
         self.records = []
+        self._clear_location_marker()
         if self.clear_highlights_callback is not None:
             self.clear_highlights_callback()
         for layer in QgsProject.instance().mapLayers().values():
@@ -102,25 +126,50 @@ class ErrorResultsController:
         if layers_to_select:
             self.iface.setActiveLayer(next(iter(layers_to_select.values()))[0])
         canvas = self.iface.mapCanvas()
-        extent = QgsRectangle()
-        has_extent = False
-        for layer, _ in layers_to_select.values():
-            for feature in layer.selectedFeatures():
-                geometry = feature.geometry()
-                if geometry is None or geometry.isEmpty():
-                    continue
-                feature_extent = geometry.boundingBox()
-                if not has_extent:
-                    extent = QgsRectangle(feature_extent)
-                    has_extent = True
-                else:
-                    extent.combineExtentWith(feature_extent)
-        if has_extent:
-            canvas.setExtent(extent)
-            canvas.zoomScale(canvas.scale() * 1.25)
+        location = record.get("location")
+        if location is not None:
+            point = QgsPointXY(float(location[0]), float(location[1]))
+            self._show_location_marker(point)
+            canvas.setCenter(point)
+            canvas.zoomScale(canvas.scale() * 0.15)
+        else:
+            extent = QgsRectangle()
+            has_extent = False
+            for layer, _ in layers_to_select.values():
+                for feature in layer.selectedFeatures():
+                    geometry = feature.geometry()
+                    if geometry is None or geometry.isEmpty():
+                        continue
+                    feature_extent = geometry.boundingBox()
+                    if not has_extent:
+                        extent = QgsRectangle(feature_extent)
+                        has_extent = True
+                    else:
+                        extent.combineExtentWith(feature_extent)
+            if has_extent:
+                canvas.setExtent(extent)
+                canvas.zoomScale(canvas.scale() * 1.25)
         canvas.refresh()
 
+    def _show_location_marker(self, point):
+        self._clear_location_marker()
+        canvas = self.iface.mapCanvas()
+        self.location_marker = QgsRubberBand(canvas, QgsWkbTypes.PointGeometry)
+        self.location_marker.setToGeometry(QgsGeometry.fromPointXY(point), None)
+        self.location_marker.setColor(QColor("#e53935"))
+        self.location_marker.setWidth(5)
+        self.location_marker.show()
+
+    def _clear_location_marker(self):
+        if self.location_marker is not None:
+            try:
+                self.iface.mapCanvas().scene().removeItem(self.location_marker)
+            except (AttributeError, RuntimeError):
+                pass
+            self.location_marker = None
+
     def unload(self):
+        self._clear_location_marker()
         if self.dialog is not None:
             self.dialog.close()
             self.dialog = None
@@ -135,6 +184,11 @@ class ErrorResultsDialog(QDialog):
         self.size_key = "LaneBatchUpdate/errorResultsDialogSize"
         self.boundary_operator_key = "LaneBatchUpdate/boundaryLengthOperator"
         self.boundary_threshold_key = "LaneBatchUpdate/boundaryLengthThreshold"
+        self.extra_endpoint_short_enabled_key = "LaneBatchUpdate/extraEndpointShortEnabled"
+        self.extra_endpoint_short_threshold_key = "LaneBatchUpdate/extraEndpointShortThreshold"
+        self.overlap_length_enabled_key = "LaneBatchUpdate/overlapLengthEnabled"
+        self.overlap_length_threshold_key = "LaneBatchUpdate/overlapLengthThreshold"
+        self.overlap_exact_enabled_key = "LaneBatchUpdate/overlapExactEnabled"
         self.setWindowTitle("全部规则")
         self.setMinimumSize(760, 420)
         saved_size = self.settings.value(self.size_key)
@@ -182,6 +236,10 @@ class ErrorResultsDialog(QDialog):
         self.boundary_rule = self._add_rule("BOUNDARY长度检测")
         self.speed_rule = self._add_rule("SPEEDLIMIT不能为空且不能为40")
         self.virtual_rule = self._add_rule("路口LANE与VIRTUAL检查")
+        self.duplicate_vertex_rule = self._add_rule("重复顶点检查")
+        self.extra_endpoint_rule = self._add_rule("BOUNDARY多余端点检查")
+        self.dangling_point_rule = self._add_rule("BOUNDARY/LANE悬挂点检查")
+        self.overlapping_line_rule = self._add_rule("BOUNDARY/LANE重合线检查")
         self.rules_list.currentItemChanged.connect(self._update_rule_options)
         layout.addWidget(self.rules_list, 1)
 
@@ -210,6 +268,46 @@ class ErrorResultsDialog(QDialog):
         options_layout.addWidget(self.boundary_threshold)
         options_layout.addStretch(1)
         layout.addWidget(self.boundary_options)
+
+        self.extra_endpoint_options = QWidget(page)
+        extra_options_layout = QHBoxLayout(self.extra_endpoint_options)
+        extra_options_layout.setContentsMargins(0, 0, 0, 0)
+        self.extra_endpoint_short_enabled = QCheckBox("仅检查至少一条线长度小于", self.extra_endpoint_options)
+        self.extra_endpoint_short_enabled.setChecked(self._setting_bool(self.extra_endpoint_short_enabled_key, False))
+        self.extra_endpoint_short_enabled.toggled.connect(self._save_extra_endpoint_settings)
+        extra_options_layout.addWidget(self.extra_endpoint_short_enabled)
+        self.extra_endpoint_short_threshold = QDoubleSpinBox(self.extra_endpoint_options)
+        self.extra_endpoint_short_threshold.setRange(0, 1e12)
+        self.extra_endpoint_short_threshold.setDecimals(6)
+        self.extra_endpoint_short_threshold.setSingleStep(1.0)
+        self.extra_endpoint_short_threshold.setValue(self._setting_float(self.extra_endpoint_short_threshold_key, 5.0))
+        self.extra_endpoint_short_threshold.valueChanged.connect(self._save_extra_endpoint_settings)
+        extra_options_layout.addWidget(self.extra_endpoint_short_threshold)
+        extra_options_layout.addWidget(QLabel("米", self.extra_endpoint_options))
+        extra_options_layout.addStretch(1)
+        layout.addWidget(self.extra_endpoint_options)
+
+        self.overlap_options = QWidget(page)
+        overlap_options_layout = QHBoxLayout(self.overlap_options)
+        overlap_options_layout.setContentsMargins(0, 0, 0, 0)
+        self.overlap_length_enabled = QCheckBox("重合长度不少于", self.overlap_options)
+        self.overlap_length_enabled.setChecked(self._setting_bool(self.overlap_length_enabled_key, True))
+        self.overlap_length_enabled.toggled.connect(self._save_overlap_settings)
+        overlap_options_layout.addWidget(self.overlap_length_enabled)
+        self.overlap_length_threshold = QDoubleSpinBox(self.overlap_options)
+        self.overlap_length_threshold.setRange(0, 1e12)
+        self.overlap_length_threshold.setDecimals(6)
+        self.overlap_length_threshold.setSingleStep(1.0)
+        self.overlap_length_threshold.setValue(self._setting_float(self.overlap_length_threshold_key, 1.0))
+        self.overlap_length_threshold.valueChanged.connect(self._save_overlap_settings)
+        overlap_options_layout.addWidget(self.overlap_length_threshold)
+        overlap_options_layout.addWidget(QLabel("米", self.overlap_options))
+        self.overlap_exact_enabled = QCheckBox("检查完全重合", self.overlap_options)
+        self.overlap_exact_enabled.setChecked(self._setting_bool(self.overlap_exact_enabled_key, True))
+        self.overlap_exact_enabled.toggled.connect(self._save_overlap_settings)
+        overlap_options_layout.addWidget(self.overlap_exact_enabled)
+        overlap_options_layout.addStretch(1)
+        layout.addWidget(self.overlap_options)
 
         self.progress_label = QLabel("尚未执行规则。", page)
         layout.addWidget(self.progress_label)
@@ -296,6 +394,8 @@ class ErrorResultsDialog(QDialog):
 
     def _update_rule_options(self, current, previous):
         self.boundary_options.setVisible(current is self.boundary_rule)
+        self.extra_endpoint_options.setVisible(current is self.extra_endpoint_rule)
+        self.overlap_options.setVisible(current is self.overlapping_line_rule)
 
     def _set_all_rules(self, state):
         for row in range(self.rules_list.count()):
@@ -309,6 +409,27 @@ class ErrorResultsDialog(QDialog):
     def _save_boundary_settings(self, *args):
         self.settings.setValue(self.boundary_operator_key, self.boundary_operator.currentText())
         self.settings.setValue(self.boundary_threshold_key, self.boundary_threshold.value())
+        self.settings.sync()
+
+    def _setting_bool(self, key, default):
+        value = self.settings.value(key, default)
+        return value if isinstance(value, bool) else str(value).strip().lower() in ("1", "true", "yes")
+
+    def _setting_float(self, key, default):
+        try:
+            return float(self.settings.value(key, default))
+        except (TypeError, ValueError):
+            return default
+
+    def _save_extra_endpoint_settings(self, *args):
+        self.settings.setValue(self.extra_endpoint_short_enabled_key, self.extra_endpoint_short_enabled.isChecked())
+        self.settings.setValue(self.extra_endpoint_short_threshold_key, self.extra_endpoint_short_threshold.value())
+        self.settings.sync()
+
+    def _save_overlap_settings(self, *args):
+        self.settings.setValue(self.overlap_length_enabled_key, self.overlap_length_enabled.isChecked())
+        self.settings.setValue(self.overlap_length_threshold_key, self.overlap_length_threshold.value())
+        self.settings.setValue(self.overlap_exact_enabled_key, self.overlap_exact_enabled.isChecked())
         self.settings.sync()
 
     def _set_progress(self, value, message):
@@ -326,6 +447,14 @@ class ErrorResultsDialog(QDialog):
             selected_rules.append(("SPEEDLIMIT不能为空且不能为40", self.controller.speed_checker))
         if self.virtual_rule.checkState() == Qt.Checked:
             selected_rules.append(("路口LANE与VIRTUAL检查", self.controller.virtual_checker))
+        if self.duplicate_vertex_rule.checkState() == Qt.Checked:
+            selected_rules.append(("重复顶点检查", self.controller.duplicate_vertex_checker))
+        if self.extra_endpoint_rule.checkState() == Qt.Checked:
+            selected_rules.append(("BOUNDARY多余端点检查", self.controller.extra_endpoint_checker))
+        if self.dangling_point_rule.checkState() == Qt.Checked:
+            selected_rules.append(("BOUNDARY/LANE悬挂点检查", self.controller.dangling_point_checker))
+        if self.overlapping_line_rule.checkState() == Qt.Checked:
+            selected_rules.append(("BOUNDARY/LANE重合线检查", self.controller.overlapping_line_checker))
         if not selected_rules:
             self._set_progress(0, "请至少选择一条规则。")
             self.rules_list.setFocus()
@@ -347,6 +476,17 @@ class ErrorResultsDialog(QDialog):
                         self.boundary_operator.currentText(),
                         self.boundary_threshold.value(),
                     )
+                elif name == "BOUNDARY多余端点检查":
+                    checker(
+                        self.extra_endpoint_short_enabled.isChecked(),
+                        self.extra_endpoint_short_threshold.value(),
+                    )
+                elif name == "BOUNDARY/LANE重合线检查":
+                    checker(
+                        self.overlap_length_enabled.isChecked(),
+                        self.overlap_length_threshold.value(),
+                        self.overlap_exact_enabled.isChecked(),
+                    )
                 else:
                     checker()
                 self._set_progress(int(index * 100 / total), "已完成：%s" % name)
@@ -365,6 +505,8 @@ class ErrorResultsDialog(QDialog):
 
     def closeEvent(self, event):
         self._save_boundary_settings()
+        self._save_extra_endpoint_settings()
+        self._save_overlap_settings()
         self.settings.setValue(self.size_key, self.size())
         self.settings.sync()
         super().closeEvent(event)
