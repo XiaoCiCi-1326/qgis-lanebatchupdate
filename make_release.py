@@ -42,6 +42,7 @@ RELEASE_FILES = (
     "icon_add_feature_preset.svg",
     "icon_boundary_length.svg",
     "icon_error_results.svg",
+    "icon_lane_num_fix.svg",
     "lane_fix_excel.py",
     "lane_fix_engine.py",
     "lane_fix_controller.py",
@@ -54,6 +55,10 @@ RELEASE_FILES = (
     "reconstruct_workflow.py",
     "reconstruct_algorithms.json.example",
     "安装说明.txt",
+)
+
+RELEASE_ROOT_FILES = (
+    "install.bat",
 )
 
 INSTALL_README = """Lane 批量刷值工具 — 安装说明
@@ -160,6 +165,14 @@ def main():
         copied.append(name)
 
     install_path.unlink(missing_ok=True)
+
+    for name in RELEASE_ROOT_FILES:
+        src = PLUGIN_DIR / name
+        if not src.is_file():
+            missing.append(name)
+            continue
+        shutil.copy2(src, release_dir / name)
+        copied.append(name)
 
     if missing:
         raise SystemExit(f"缺少文件: {missing}")

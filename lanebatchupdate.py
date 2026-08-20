@@ -37,6 +37,7 @@ class LaneBatchUpdateTool:
     MODE_VIRTUAL = "virtual"
     MODE_REMOVE_ALL = "remove_all"
     MODE_CHECK_RIGHT_STRAIGHT = "check_right_straight"
+    MODE_FIX_LANE_NUM = "fix_lane_num"
     MODE_SHOW_ERROR_RESULTS = "show_error_results"
     MODE_CLEAR_ALL_HIGHLIGHTS = "clear_all_highlights"
 
@@ -68,6 +69,7 @@ class LaneBatchUpdateTool:
             self.run_check_extra_boundary_endpoints,
             self.run_check_dangling_points,
             self.run_check_overlapping_lines,
+            self.run_check_lane_num,
         )
 
     def initGui(self):
@@ -76,6 +78,7 @@ class LaneBatchUpdateTool:
             (self.MODE_SET_ROAD2, "ROAD_TYPE=2", "icon_road2.png"),
             (self.MODE_VIRTUAL, "转向个数刷值", "icon_virtual.png"),
             (self.MODE_SHOW_ERROR_RESULTS, "全部规则", "icon_error_results.svg"),
+            (self.MODE_FIX_LANE_NUM, "修复 LANE_NUM", "icon_lane_num_fix.svg"),
             (self.MODE_CLEAR_ALL_HIGHLIGHTS, "取消全部高亮", "icon_clear_right_straight.svg"),
             (self.MODE_REMOVE_ALL, "移除所有图层", "icon_remove_layers.svg"),
         )
@@ -786,6 +789,111 @@ class LaneBatchUpdateTool:
                         }
                     )
         self.error_results.replace_records(records, "路口LANE与VIRTUAL检查")
+
+    def run_check_lane_num(self):
+        lane_layer = self.get_project_layer("LANE")
+        if lane_layer is None:
+            QMessageBox.critical(None, "图层缺失", "请在 QGIS 中加载 LANE 图层")
+            return
+
+        fields, missing = self.resolve_field_map(lane_layer, ["LANE_NUM", "SECTION_NO"])
+        rode_id_field = next(
+            (field.name() for field in lane_layer.fields() if field.name().upper() in ("RODE_ID", "ROAD_ID")),
+            None,
+        )
+        if rode_id_field is None:
+            missing.append("RODE_ID（或 ROAD_ID）")
+        if missing:
+            QMessageBox.critical(None, "字段缺失", "LANE 缺少字段：%s" % ", ".join(missing))
+            return
+
+        groups = defaultdict(list)
+        for feature in lane_layer.getFeatures():
+            rode_id = self.norm_id(feature[rode_id_field])
+            section_no = self.to_int(feature[fields["SECTION_NO"]])
+            if not rode_id or section_no is None:
+                continue
+            groups[rode_id].append((feature, section_no))
+
+        records = []
+        for rode_id, items in groups.items():
+            expected = max(section_no for _, section_no in items)
+            invalid_features = [
+                feature for feature, _ in items
+                if self.to_int(feature[fields["LANE_NUM"]]) != expected
+            ]
+            if not invalid_features:
+                continue
+            display_ids = [str(feature.id()) for feature in invalid_features]
+            records.append(
+                {
+                    "type": "LANE_NUM字段检测",
+                    "message": "RODE_ID=%s 的 SECTION_NO 最大值为%d，LANE_NUM 应统一为%d；当前 %d 条不符合"
+                    % (rode_id, expected, expected, len(invalid_features)),
+                    "selections": {lane_layer.id(): [feature.id() for feature in invalid_features]},
+                    "display_layers": {lane_layer.id(): lane_layer.name()},
+                    "display_ids": {lane_layer.id(): display_ids},
+                }
+            )
+        self.error_results.replace_records(records, "LANE_NUM字段检测")
+        text = "LANE_NUM字段检测完成：发现 %d 个 RODE_ID 分组不符合规则。" % len(records)
+        self.iface.messageBar().pushMessage(
+            "车道工具", text, Qgis.Warning if records else Qgis.Info, duration=8
+        )
+
+    def fix_lane_num(self):
+        lane_layer = self.get_project_layer("LANE")
+        if lane_layer is None:
+            QMessageBox.critical(None, "图层缺失", "请在 QGIS 中加载 LANE 图层")
+            return
+
+        fields, missing = self.resolve_field_map(lane_layer, ["LANE_NUM", "SECTION_NO"])
+        rode_id_field = next(
+            (field.name() for field in lane_layer.fields() if field.name().upper() in ("RODE_ID", "ROAD_ID")),
+            None,
+        )
+        if rode_id_field is None:
+            missing.append("RODE_ID（或 ROAD_ID）")
+        if missing:
+            QMessageBox.critical(None, "字段缺失", "LANE 缺少字段：%s" % ", ".join(missing))
+            return
+
+        groups = defaultdict(list)
+        for feature in lane_layer.getFeatures():
+            rode_id = self.norm_id(feature[rode_id_field])
+            section_no = self.to_int(feature[fields["SECTION_NO"]])
+            if rode_id and section_no is not None:
+                groups[rode_id].append((feature, section_no))
+
+        self.ensure_editing(lane_layer)
+        changed = 0
+        try:
+            for items in groups.values():
+                expected = max(section_no for _, section_no in items)
+                for feature, _ in items:
+                    if self.to_int(feature[fields["LANE_NUM"]]) == expected:
+                        continue
+                    feature[fields["LANE_NUM"]] = expected
+                    if not lane_layer.updateFeature(feature):
+                        raise RuntimeError("LANE_NUM 写入失败，要素 ID=%s" % feature.id())
+                    changed += 1
+            ok, errors = self.commit_layer(lane_layer)
+            if not ok:
+                lane_layer.rollBack()
+                raise RuntimeError("\n".join(errors))
+        except RuntimeError as exc:
+            if lane_layer.isEditable():
+                lane_layer.rollBack()
+            QMessageBox.critical(None, "修复失败", str(exc))
+            return
+
+        lane_layer.triggerRepaint()
+        self.run_check_lane_num()
+        QMessageBox.information(
+            None,
+            "修复完成",
+            "已按相同 RODE_ID 分组的最大 SECTION_NO 修复 %d 条 LANE_NUM。" % changed,
+        )
 
     @staticmethod
     def is_empty(value):
@@ -1680,6 +1788,9 @@ class LaneBatchUpdateTool:
                 return
             elif mode == "boundary_length":
                 self.boundary_length.show()
+                return
+            elif mode == self.MODE_FIX_LANE_NUM:
+                self.fix_lane_num()
                 return
             elif mode == self.MODE_SHOW_ERROR_RESULTS:
                 self.show_error_results()

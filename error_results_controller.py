@@ -44,6 +44,7 @@ class ErrorResultsController:
         self.extra_endpoint_checker = None
         self.dangling_point_checker = None
         self.overlapping_line_checker = None
+        self.lane_num_checker = None
         self.clear_highlights_callback = None
         self.location_marker = None
 
@@ -58,6 +59,7 @@ class ErrorResultsController:
         extra_endpoint_checker=None,
         dangling_point_checker=None,
         overlapping_line_checker=None,
+        lane_num_checker=None,
     ):
         self.right_straight_checker = right_straight_checker
         self.boundary_checker = boundary_checker
@@ -67,6 +69,7 @@ class ErrorResultsController:
         self.extra_endpoint_checker = extra_endpoint_checker
         self.dangling_point_checker = dangling_point_checker
         self.overlapping_line_checker = overlapping_line_checker
+        self.lane_num_checker = lane_num_checker
         self.clear_highlights_callback = clear_highlights_callback
 
     def replace_records(self, records, record_type, title=None):
@@ -240,6 +243,7 @@ class ErrorResultsDialog(QDialog):
         self.extra_endpoint_rule = self._add_rule("BOUNDARY多余端点检查")
         self.dangling_point_rule = self._add_rule("BOUNDARY/LANE悬挂点检查")
         self.overlapping_line_rule = self._add_rule("BOUNDARY/LANE重合线检查")
+        self.lane_num_rule = self._add_rule("LANE_NUM字段检测")
         self.rules_list.currentItemChanged.connect(self._update_rule_options)
         layout.addWidget(self.rules_list, 1)
 
@@ -455,6 +459,8 @@ class ErrorResultsDialog(QDialog):
             selected_rules.append(("BOUNDARY/LANE悬挂点检查", self.controller.dangling_point_checker))
         if self.overlapping_line_rule.checkState() == Qt.Checked:
             selected_rules.append(("BOUNDARY/LANE重合线检查", self.controller.overlapping_line_checker))
+        if self.lane_num_rule.checkState() == Qt.Checked:
+            selected_rules.append(("LANE_NUM字段检测", self.controller.lane_num_checker))
         if not selected_rules:
             self._set_progress(0, "请至少选择一条规则。")
             self.rules_list.setFocus()
