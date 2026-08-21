@@ -540,8 +540,10 @@ class NewFeatureDialog(QDialog):
             QMessageBox.warning(self, "加载预设失败", str(exc))
 
     def accept(self):
-        # 该表单绑定的是尚未加入图层的临时要素。
-        # QgsAttributeForm.save() 会尝试直接写入图层，不能与下面的 addFeature() 混用。
+        # 将编辑控件的当前值同步回这个尚未加入图层的临时要素。
+        if not self.form.save():
+            QMessageBox.warning(self, "新增失败", "无法保存属性表单中的修改。")
+            return
         updated_feature = self.form.feature()
         if updated_feature is None:
             QMessageBox.warning(self, "新增失败", "无法读取属性表单中的要素。")
