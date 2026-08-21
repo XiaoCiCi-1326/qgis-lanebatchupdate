@@ -32,7 +32,8 @@ class LaneBoundaryJoinController:
             "将选中线两个端点中距离另一份数据最近的一个端点吸附到目标端点"
         )
         self.action.triggered.connect(self.join_selected)
-        self.iface.addVectorToolBarIcon(self.action)
+        # 不直接添加到工具栏，由主文件根据 toolbar_mode 控制
+        # self.iface.addVectorToolBarIcon(self.action)
         self.iface.addPluginToVectorMenu("车道处理工具", self.action)
         actions_master.append(self.action)
 

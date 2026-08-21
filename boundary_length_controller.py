@@ -38,7 +38,8 @@ class BoundaryLengthController:
         self.action = QAction(QIcon(icon_path), "BOUNDARY长度筛选", self.iface.mainWindow())
         self.action.setToolTip("按 BOUNDARY 线要素长度筛选并高亮")
         self.action.triggered.connect(self.show)
-        self.iface.addVectorToolBarIcon(self.action)
+        # 不直接添加到工具栏，由主文件根据 toolbar_mode 控制
+        # self.iface.addVectorToolBarIcon(self.action)
         self.iface.addPluginToVectorMenu("车道处理工具", self.action)
         actions_master.append(self.action)
 

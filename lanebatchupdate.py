@@ -79,18 +79,22 @@ class LaneBatchUpdateTool:
 
     def _load_toolbar_mode(self):
         settings = QSettings()
-        return settings.value("lane_batch_update/toolbar_mode", "flat", type=str)
+        mode = settings.value("lane_batch_update/toolbar_mode", "flat", type=str)
+        print(f"[LaneBatchUpdate] 加载工具栏模式: {mode}")
+        return mode
 
     def _save_toolbar_mode(self, mode):
         settings = QSettings()
         settings.setValue("lane_batch_update/toolbar_mode", mode)
+        print(f"[LaneBatchUpdate] 保存工具栏模式: {mode}")
 
     def initGui(self):
         toggle_icon_path = os.path.join(self.plugin_dir, "icon_toggle_layout.svg")
         self.toggle_action = QAction(QIcon(toggle_icon_path), "切换工具栏布局", self.iface.mainWindow())
         self.toggle_action.triggered.connect(self._toggle_toolbar_mode)
-        self.iface.addVectorToolBarIcon(self.toggle_action)
         self.iface.addPluginToVectorMenu("车道处理工具", self.toggle_action)
+        # 切换按钮总是放在工具栏，方便切换
+        self.iface.addVectorToolBarIcon(self.toggle_action)
 
         buttons = (
             (self.MODE_SPEED, "限速刷值", "icon_speed.png"),
@@ -118,11 +122,15 @@ class LaneBatchUpdateTool:
         self.attribute_preset.initGui(self.actions)
         self.boundary_length.initGui(self.actions, register_action=False)
 
+        # 根据保存的模式初始化工具栏布局
+        print(f"[LaneBatchUpdate] 当前工具栏模式: {self.toolbar_mode}")
         if self.toolbar_mode == "flat":
-            for action in self.actions:
-                self.iface.addVectorToolBarIcon(action)
+            print(f"[LaneBatchUpdate] 应用平铺模式，添加 {len(self.actions)} 个按钮到工具栏")
+            self._apply_flat_mode()
         else:
-            self._create_categorized_menu()
+            print(f"[LaneBatchUpdate] 应用菜单模式，使用分类菜单")
+            # 菜单模式下不需要做额外处理，按钮已经通过菜单添加了
+            pass
 
     def _toggle_toolbar_mode(self):
         if self.toolbar_mode == "flat":
@@ -132,13 +140,21 @@ class LaneBatchUpdateTool:
         self._save_toolbar_mode(self.toolbar_mode)
         self._apply_toolbar_mode()
 
+    def _apply_flat_mode(self):
+        """应用平铺模式 - 所有按钮都显示在工具栏"""
+        for action in self.actions:
+            self.iface.addVectorToolBarIcon(action)
+
     def _apply_toolbar_mode(self):
+        """切换工具栏模式 - 移除所有按钮后重新应用"""
+        # 移除所有 action（包括主文件和子控制器的）
         for action in self.actions:
             try:
                 self.iface.removeVectorToolBarIcon(action)
             except (AttributeError, RuntimeError):
                 pass
 
+        # 移除菜单按钮（如果存在）
         if self.menu_button:
             toolbar = self.iface.vectorToolBar()
             if toolbar:
@@ -153,9 +169,9 @@ class LaneBatchUpdateTool:
             self.menu_button = None
             self.main_menu = None
 
+        # 重新应用当前模式
         if self.toolbar_mode == "flat":
-            for action in self.actions:
-                self.iface.addVectorToolBarIcon(action)
+            self._apply_flat_mode()
         else:
             self._create_categorized_menu()
 

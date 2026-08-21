@@ -61,9 +61,10 @@ class LaneStoplineSnapController(QObject):
             "将选中 LANE 的最近端点吸附到最近 STOPLINE；端点越过 STOPLINE 时截断越界部分"
         )
         self.action.triggered.connect(self.snap_selected)
-        self.iface.addVectorToolBarIcon(self.action)
+        # 不直接添加到工具栏，由主文件根据 toolbar_mode 控制
+        # self.iface.addVectorToolBarIcon(self.action)
         toolbar = self.iface.vectorToolBar()
-        button = toolbar.widgetForAction(self.action) if toolbar is not None else None
+        button = None  # toolbar.widgetForAction(self.action) if toolbar is not None else None
         if button is not None:
             button.installEventFilter(self)
         self.iface.addPluginToVectorMenu("车道处理工具", self.action)

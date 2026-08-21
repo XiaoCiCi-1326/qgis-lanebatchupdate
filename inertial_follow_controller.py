@@ -28,7 +28,8 @@ class InertialFollowController(QObject):
         self.action.setCheckable(True)
         self.action.setToolTip("跟随惯导要素选择移动地图，保持当前比例尺；, / . 切换前后要素")
         self.action.triggered.connect(self.toggle)
-        self.iface.addVectorToolBarIcon(self.action)
+        # 不直接添加到工具栏，由主文件根据 toolbar_mode 控制
+        # self.iface.addVectorToolBarIcon(self.action)
         self.iface.addPluginToVectorMenu("车道处理工具", self.action)
         actions_master.append(self.action)
 

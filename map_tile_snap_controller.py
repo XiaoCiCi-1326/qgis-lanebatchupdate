@@ -60,9 +60,10 @@ class MapTileSnapController(QObject):
             "将每个选中 LANE/BOUNDARY 的最近端点吸附到 MAP_TILE 边界"
         )
         self.action.triggered.connect(self.snap_selected)
-        self.iface.addVectorToolBarIcon(self.action)
+        # 不直接添加到工具栏，由主文件根据 toolbar_mode 控制
+        # self.iface.addVectorToolBarIcon(self.action)
         toolbar = self.iface.vectorToolBar()
-        button = toolbar.widgetForAction(self.action) if toolbar is not None else None
+        button = None  # toolbar.widgetForAction(self.action) if toolbar is not None else None
         if button is not None:
             button.installEventFilter(self)
         self.iface.addPluginToVectorMenu("车道处理工具", self.action)

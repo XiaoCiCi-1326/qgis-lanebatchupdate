@@ -1225,14 +1225,16 @@ class AttributePresetController:
         self.add_feature_action.setCheckable(True)
         self.add_feature_action.setToolTip("点击开启绘制工具，再点击关闭")
         self.add_feature_action.triggered.connect(self._toggle_add_feature)
-        self.iface.addVectorToolBarIcon(self.add_feature_action)
+        # 不直接添加到工具栏，由主文件根据 toolbar_mode 控制
+        # self.iface.addVectorToolBarIcon(self.add_feature_action)
         self.iface.addPluginToVectorMenu("车道处理工具", self.add_feature_action)
         actions.append(self.add_feature_action)
 
         action = QAction(QIcon(preset_icon_path), "属性预设", self.iface.mainWindow())
         action.setToolTip("保存和应用图层属性预设")
         action.triggered.connect(self.show)
-        self.iface.addVectorToolBarIcon(action)
+        # 不直接添加到工具栏，由主文件根据 toolbar_mode 控制
+        # self.iface.addVectorToolBarIcon(action)
         self.iface.addPluginToVectorMenu("车道处理工具", action)
         actions.append(action)
 

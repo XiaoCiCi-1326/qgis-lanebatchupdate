@@ -52,7 +52,8 @@ class ExcelPreviewController:
         action = QAction(QIcon(icon_path), "预览后修复", self.iface.mainWindow())
         action.setToolTip("解析 Excel 后弹出错误清单，可勾选/全选/反选，再一键修复")
         action.triggered.connect(self.run)
-        self.iface.addVectorToolBarIcon(action)
+        # 不直接添加到工具栏，由主文件根据 toolbar_mode 控制
+        # self.iface.addVectorToolBarIcon(action)
         self.iface.addPluginToVectorMenu("车道处理工具", action)
         self.actions.append(action)
         actions_master.append(action)
