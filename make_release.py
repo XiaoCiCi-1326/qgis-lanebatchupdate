@@ -43,6 +43,7 @@ RELEASE_FILES = (
     "icon_boundary_length.svg",
     "icon_error_results.svg",
     "icon_lane_num_fix.svg",
+    "icon_toggle_layout.svg",
     "lane_fix_excel.py",
     "lane_fix_engine.py",
     "lane_fix_controller.py",

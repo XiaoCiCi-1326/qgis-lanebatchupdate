@@ -10,7 +10,8 @@
   移除所有图层   → 从当前 QGIS 工程中移除全部图层
 """
 from qgis.PyQt.QtGui import QIcon, QColor
-from qgis.PyQt.QtWidgets import QAction, QMessageBox
+from qgis.PyQt.QtWidgets import QAction, QMessageBox, QMenu, QToolButton
+from qgis.PyQt.QtCore import QSettings
 from qgis.core import QgsProject, Qgis, QgsCoordinateTransform, QgsFeatureRequest, QgsSpatialIndex, QgsVectorLayer, QgsWkbTypes
 from qgis.gui import QgsHighlight
 from collections import defaultdict
@@ -49,6 +50,10 @@ class LaneBatchUpdateTool:
         self.shp_dir = ""
         self.field_names = {}
         self.overlap_highlights = []
+        self.toolbar_mode = self._load_toolbar_mode()
+        self.toggle_action = None
+        self.menu_button = None
+        self.main_menu = None
         self.reconstruct = ReconstructController(iface, self.plugin_dir, self.log)
         self.lane_fix = LaneFixController(iface, self.plugin_dir, self.log)
         self.excel_preview = ExcelPreviewController(iface, self.plugin_dir, self.log)
@@ -72,7 +77,21 @@ class LaneBatchUpdateTool:
             self.run_check_lane_num,
         )
 
+    def _load_toolbar_mode(self):
+        settings = QSettings()
+        return settings.value("lane_batch_update/toolbar_mode", "flat", type=str)
+
+    def _save_toolbar_mode(self, mode):
+        settings = QSettings()
+        settings.setValue("lane_batch_update/toolbar_mode", mode)
+
     def initGui(self):
+        toggle_icon_path = os.path.join(self.plugin_dir, "icon_toggle_layout.svg")
+        self.toggle_action = QAction(QIcon(toggle_icon_path), "切换工具栏布局", self.iface.mainWindow())
+        self.toggle_action.triggered.connect(self._toggle_toolbar_mode)
+        self.iface.addVectorToolBarIcon(self.toggle_action)
+        self.iface.addPluginToVectorMenu("车道处理工具", self.toggle_action)
+
         buttons = (
             (self.MODE_SPEED, "限速刷值", "icon_speed.png"),
             (self.MODE_SET_ROAD2, "ROAD_TYPE=2", "icon_road2.png"),
@@ -86,9 +105,9 @@ class LaneBatchUpdateTool:
             icon_path = os.path.join(self.plugin_dir, icon_name)
             action = QAction(QIcon(icon_path), label, self.iface.mainWindow())
             action.triggered.connect(lambda checked=False, m=mode: self.run(mode=m))
-            self.iface.addVectorToolBarIcon(action)
             self.iface.addPluginToVectorMenu("车道处理工具", action)
             self.actions.append(action)
+        
         self.reconstruct.initGui(self.actions)
         self.lane_fix.initGui(self.actions)
         self.excel_preview.initGui(self.actions)
@@ -99,11 +118,172 @@ class LaneBatchUpdateTool:
         self.attribute_preset.initGui(self.actions)
         self.boundary_length.initGui(self.actions, register_action=False)
 
+        if self.toolbar_mode == "flat":
+            for action in self.actions:
+                self.iface.addVectorToolBarIcon(action)
+        else:
+            self._create_categorized_menu()
+
+    def _toggle_toolbar_mode(self):
+        if self.toolbar_mode == "flat":
+            self.toolbar_mode = "menu"
+        else:
+            self.toolbar_mode = "flat"
+        self._save_toolbar_mode(self.toolbar_mode)
+        self._apply_toolbar_mode()
+
+    def _apply_toolbar_mode(self):
+        for action in self.actions:
+            try:
+                self.iface.removeVectorToolBarIcon(action)
+            except (AttributeError, RuntimeError):
+                pass
+
+        if self.menu_button:
+            toolbar = self.iface.vectorToolBar()
+            if toolbar:
+                try:
+                    toolbar.removeWidget(self.menu_button)
+                except (AttributeError, RuntimeError):
+                    pass
+            try:
+                self.menu_button.deleteLater()
+            except (AttributeError, RuntimeError):
+                pass
+            self.menu_button = None
+            self.main_menu = None
+
+        if self.toolbar_mode == "flat":
+            for action in self.actions:
+                self.iface.addVectorToolBarIcon(action)
+        else:
+            self._create_categorized_menu()
+
+    def _create_categorized_menu(self):
+        self.main_menu = QMenu()
+        
+        categories = {
+            "属性刷值": [
+                (self.MODE_SPEED, "限速刷值", "icon_speed.png"),
+                (self.MODE_SET_ROAD2, "ROAD_TYPE=2", "icon_road2.png"),
+                (self.MODE_VIRTUAL, "转向个数刷值", "icon_virtual.png"),
+                (self.MODE_FIX_LANE_NUM, "修复 LANE_NUM", "icon_lane_num_fix.svg"),
+            ],
+            "数据重构": [
+                ("reconstruct_prep", "准备三份数据", "icon_prepare_data.svg"),
+                ("reconstruct_full", "一键重构(全程)", "icon_rebuild_all.svg"),
+                ("fill_rbdy", "全量补空RBDY", "icon_fill_rbdy.png"),
+                ("open_original", "打开原始文件", "icon_open_original.svg"),
+            ],
+            "边线修复": [
+                ("lane_fix", "Excel边线改错", "icon_lane_fix.png"),
+                ("excel_preview", "预览后修复", "icon_lane_fix.png"),
+            ],
+            "吸附接边": [
+                ("map_tile_snap", "吸附到范围框", "icon_map_tile_snap.svg"),
+                ("lane_stopline_snap", "LANE 吸附 STOPLINE", "icon_lane_stopline_snap.svg"),
+                ("lane_boundary_join", "LANE/BOUNDARY 接边", "icon_lane_boundary_join.svg"),
+            ],
+            "属性预设": [
+                ("attribute_preset", "属性预设", "icon_attribute_preset.svg"),
+                ("add_feature", "添加要素", "icon_add_feature_preset.svg"),
+            ],
+            "质检与显示": [
+                (self.MODE_SHOW_ERROR_RESULTS, "全部规则", "icon_error_results.svg"),
+                (self.MODE_CLEAR_ALL_HIGHLIGHTS, "取消全部高亮", "icon_clear_right_straight.svg"),
+            ],
+            "辅助工具": [
+                ("inertial_follow", "惯导地图跟随", "icon_inertial_follow.svg"),
+                (self.MODE_REMOVE_ALL, "移除所有图层", "icon_remove_layers.svg"),
+            ],
+        }
+
+        for category_name, items in categories.items():
+            category_menu = self.main_menu.addMenu(category_name)
+            for item_id, label, icon_name in items:
+                icon_path = os.path.join(self.plugin_dir, icon_name)
+                action = QAction(QIcon(icon_path), label, self.iface.mainWindow())
+                action.triggered.connect(lambda checked=False, item=item_id: self._handle_menu_action(item))
+                category_menu.addAction(action)
+
+        menu_action = QAction(QIcon(os.path.join(self.plugin_dir, "icon.png")), "车道处理工具", self.iface.mainWindow())
+        self.menu_button = QToolButton()
+        self.menu_button.setMenu(self.main_menu)
+        self.menu_button.setDefaultAction(menu_action)
+        self.menu_button.setPopupMode(QToolButton.InstantPopup)
+        
+        toolbar = self.iface.vectorToolBar()
+        if toolbar:
+            toolbar.addWidget(self.menu_button)
+
+    def _handle_menu_action(self, item_id):
+        if item_id in [self.MODE_SPEED, self.MODE_SET_ROAD2, self.MODE_VIRTUAL, 
+                       self.MODE_SHOW_ERROR_RESULTS, self.MODE_FIX_LANE_NUM, 
+                       self.MODE_CLEAR_ALL_HIGHLIGHTS, self.MODE_REMOVE_ALL]:
+            self.run(mode=item_id)
+        elif item_id == "reconstruct_prep":
+            self.reconstruct.run("reconstruct_prep")
+        elif item_id == "reconstruct_full":
+            self.reconstruct.run("reconstruct_full")
+        elif item_id == "fill_rbdy":
+            self.reconstruct.fill_empty_rbdy()
+        elif item_id == "open_original":
+            self.reconstruct.open_original_folder()
+        elif item_id == "lane_fix":
+            self.lane_fix.run()
+        elif item_id == "excel_preview":
+            self.excel_preview.run()
+        elif item_id == "inertial_follow":
+            self.inertial_follow.toggle()
+        elif item_id == "map_tile_snap":
+            self.map_tile_snap.snap_selected()
+        elif item_id == "lane_stopline_snap":
+            self.lane_stopline_snap.snap_selected()
+        elif item_id == "lane_boundary_join":
+            self.lane_boundary_join.join_selected()
+        elif item_id == "attribute_preset":
+            self.attribute_preset.show()
+        elif item_id == "add_feature":
+            if self.attribute_preset.add_feature_action:
+                current_state = self.attribute_preset.add_feature_action.isChecked()
+                self.attribute_preset._toggle_add_feature(not current_state)
+
     def unload(self):
         self.clear_overlap_highlights()
+        
+        if self.toggle_action:
+            try:
+                self.iface.removeVectorToolBarIcon(self.toggle_action)
+            except (AttributeError, RuntimeError):
+                pass
+            try:
+                self.iface.removePluginVectorMenu("车道处理工具", self.toggle_action)
+            except (AttributeError, RuntimeError):
+                pass
+        
         for action in self.actions:
-            self.iface.removeVectorToolBarIcon(action)
-            self.iface.removePluginFromVectorMenu("车道处理工具", action)
+            try:
+                self.iface.removeVectorToolBarIcon(action)
+            except (AttributeError, RuntimeError):
+                pass
+            try:
+                self.iface.removePluginVectorMenu("车道处理工具", action)
+            except (AttributeError, RuntimeError):
+                pass
+        
+        if self.menu_button:
+            toolbar = self.iface.vectorToolBar()
+            if toolbar:
+                try:
+                    toolbar.removeWidget(self.menu_button)
+                except (AttributeError, RuntimeError):
+                    pass
+            try:
+                self.menu_button.deleteLater()
+            except (AttributeError, RuntimeError):
+                pass
+            self.menu_button = None
+        
         self.actions = []
         self.reconstruct.unload()
         self.lane_fix.unload()
