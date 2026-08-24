@@ -540,15 +540,27 @@ class NewFeatureDialog(QDialog):
             QMessageBox.warning(self, "加载预设失败", str(exc))
 
     def accept(self):
-        # 将编辑控件的当前值同步回这个尚未加入图层的临时要素。
-        if not self.form.save():
-            QMessageBox.warning(self, "新增失败", "无法保存属性表单中的修改。")
+        # 【BUG 修复】不要调用 self.form.save() / saveEdits()。
+        # QGIS 的 QgsAttributeForm.save() 在 AddFeatureMode 下会**自动调用 layer.addFeature**，
+        # 然后我们又显式调 layer.addFeature(self.feature)，会**重复添加同一根线**（几何相同、属性可能不同），
+        # 表现就是“第一个要素属性被改了/多出一根线”。
+        # 正确做法：手动从 form 的 widgets 中取值写到 self.feature，再由我们 addFeature 一次入库。
+        if self.form is None:
+            QMessageBox.warning(self, "新增失败", "属性表单未初始化。")
             return
+        # 让所有 widget 把当前值提交到 form 内部的 feature 副本里
+        # （用 setFeature(self.form.feature()) 强制刷新一遍，避免 widget 里有未提交的编辑）。
+        try:
+            self.form.setFeature(self.form.feature())
+        except Exception:
+            pass
         updated_feature = self.form.feature()
         if updated_feature is None:
             QMessageBox.warning(self, "新增失败", "无法读取属性表单中的要素。")
             return
+        # 用 form 中（用户实际看到的）属性回写到 self.feature，确保 widget 里的最新修改生效。
         self.feature.setAttributes(updated_feature.attributes())
+        # 再强制覆盖一遍预设字段——双保险，避免 form 内部副本与 self.feature 出现不一致。
         for index, value in self._preset_attributes.items():
             self.feature.setAttribute(index, value)
         if self.layer.addFeature(self.feature):
@@ -571,13 +583,33 @@ class AttributeBrushMapTool(QgsMapToolIdentifyFeature):
         self.layer = layer
         self.values = values
         self.preset_name = preset_name
+        # 【BUG 修复】强制只在自己的目标图层上识别要素。
+        # 否则当目标图层不在最上层时，QgsMapToolIdentifyFeature 会
+        # 从"最上层可见图层"拾取要素，把预设属性误写到其他图层；
+        # 即便目标图层在最上层，也会在某些边界情况下识别到其它图层的要素。
+        try:
+            self.setLayer(layer)
+        except (TypeError, RuntimeError):
+            pass
         self.featureIdentified.connect(self._apply_to_feature)
 
     def _apply_to_feature(self, feature):
+        # 【BUG 修复】防御性检查：只对 brush 目标图层本身的要素生效。
+        # 否则用户在其他图层"画线"或点击空白时，
+        # 即使 setLayer 已限制，仍可能有边界情况触发识别，
+        # 导致预设属性被误写到无关图层上。
+        if (
+            feature is None
+            or feature.layerId() != self.layer.id()
+            or feature.geometry() is None
+            or feature.geometry().isEmpty()
+        ):
+            return
         try:
             changed = self.controller.apply_to_feature(self.layer, feature.id(), self.values)
         except (RuntimeError, ValueError) as exc:
             QMessageBox.critical(self.controller.iface.mainWindow(), "格式刷失败", str(exc))
+            self.controller.stop_brush()
             return
         if changed:
             self.layer.triggerRepaint()
@@ -1387,6 +1419,9 @@ class AttributePresetController:
             self.add_feature_action.setChecked(False)
 
     def add_feature(self):
+        # 【BUG 修复】添加要素前，先停掉 brush，避免两个工具同时运行造成误操作。
+        if self.brush_tool is not None:
+            self.stop_brush()
         if self._resume_add_feature():
             return
         layer = self.iface.activeLayer()
@@ -1435,9 +1470,20 @@ class AttributePresetController:
         self.dialog.activateWindow()
 
     def start_brush(self, layer, values, preset_name):
+        # 【BUG 修复】启动 brush 前，如果添加要素工具仍在运行，先停掉它，
+        # 避免两个工具同时跑造成互相误触。
+        if self.add_feature_tool is not None:
+            self.stop_add_feature()
         self.stop_brush()
         self.brush_tool = AttributeBrushMapTool(self, layer, values, preset_name)
         self.iface.mapCanvas().setMapTool(self.brush_tool)
+        # 【BUG 修复】监听激活图层变化：用户切换到别的图层时，自动停掉 brush。
+        # 否则用户切换到其他图层后，brush 仍在运行，
+        # 用户在新图层的点击会被错误地识别为 brush 操作。
+        try:
+            self.iface.currentLayerChanged.connect(self._on_current_layer_changed_during_brush)
+        except (TypeError, RuntimeError):
+            pass
         self.iface.messageBar().pushMessage(
             "属性格式刷",
             f"当前使用预设“{preset_name}”，请点击 {layer.name()} 线要素；按 Esc 结束。",
@@ -1445,10 +1491,30 @@ class AttributePresetController:
             duration=8,
         )
 
+    def _on_current_layer_changed_during_brush(self, new_layer):
+        """用户切换激活图层时，如果不在 brush 目标图层上，自动停掉 brush。"""
+        if self.brush_tool is None:
+            return
+        brush_layer_id = self.brush_tool.layer.id()
+        if new_layer is None or new_layer.id() != brush_layer_id:
+            self.iface.messageBar().pushMessage(
+                "属性格式刷",
+                f"已切换激活图层，属性格式刷自动结束（仅对 {self.brush_tool.layer.name()} 生效）。",
+                Qgis.Warning,
+                duration=4,
+            )
+            self.stop_brush()
+
     def stop_brush(self):
         if self.brush_tool is None:
             return
+        # 断开激活图层变化的监听
+        try:
+            self.iface.currentLayerChanged.disconnect(self._on_current_layer_changed_during_brush)
+        except (TypeError, RuntimeError):
+            pass
         canvas = self.iface.mapCanvas()
+        # 只有当 brush 仍是当前 mapTool 时才解绑，避免对其他工具产生副作用。
         if canvas.mapTool() is self.brush_tool:
             canvas.unsetMapTool(self.brush_tool)
         self.brush_tool = None

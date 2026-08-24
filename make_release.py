@@ -44,6 +44,8 @@ RELEASE_FILES = (
     "icon_error_results.svg",
     "icon_lane_num_fix.svg",
     "icon_toggle_layout.svg",
+    "icon_raster_pyramid.svg",
+    "icon_raster_compress.svg",
     "lane_fix_excel.py",
     "lane_fix_engine.py",
     "lane_fix_controller.py",
@@ -55,6 +57,8 @@ RELEASE_FILES = (
     "reconstruct_processing.py",
     "reconstruct_workflow.py",
     "reconstruct_algorithms.json.example",
+    "raster_pyramid_controller.py",
+    "raster_compress_controller.py",
     "安装说明.txt",
 )
 

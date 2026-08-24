@@ -30,6 +30,8 @@ from .lane_boundary_join_controller import LaneBoundaryJoinController
 from .attribute_preset_controller import AttributePresetController
 from .boundary_length_controller import BoundaryLengthController
 from .error_results_controller import ErrorResultsController
+from .raster_pyramid_controller import RasterPyramidController
+from .raster_compress_controller import RasterCompressController
 
 
 class LaneBatchUpdateTool:
@@ -64,6 +66,8 @@ class LaneBatchUpdateTool:
         self.attribute_preset = AttributePresetController(iface, self.plugin_dir)
         self.error_results = ErrorResultsController(iface)
         self.boundary_length = BoundaryLengthController(iface, self.plugin_dir, self.error_results)
+        self.raster_pyramid = RasterPyramidController(iface, self.plugin_dir)
+        self.raster_compress = RasterCompressController(iface, self.plugin_dir)
         self.error_results.configure_checkers(
             self.run_check_right_straight_overlap,
             self.boundary_length.apply_filter,
@@ -121,6 +125,8 @@ class LaneBatchUpdateTool:
         self.lane_boundary_join.initGui(self.actions)
         self.attribute_preset.initGui(self.actions)
         self.boundary_length.initGui(self.actions, register_action=False)
+        self.raster_pyramid.initGui(self.actions)
+        self.raster_compress.initGui(self.actions)
 
         # 根据保存的模式初始化工具栏布局
         print(f"[LaneBatchUpdate] 当前工具栏模式: {self.toolbar_mode}")
@@ -210,6 +216,7 @@ class LaneBatchUpdateTool:
             ],
             "辅助工具": [
                 ("inertial_follow", "惯导地图跟随", "icon_inertial_follow.svg"),
+                ("raster_pyramid", "TIF 生成金字塔", "icon_raster_pyramid.svg"),
                 (self.MODE_REMOVE_ALL, "移除所有图层", "icon_remove_layers.svg"),
             ],
         }
@@ -251,6 +258,8 @@ class LaneBatchUpdateTool:
             self.excel_preview.run()
         elif item_id == "inertial_follow":
             self.inertial_follow.toggle()
+        elif item_id == "raster_pyramid":
+            self.raster_pyramid.run()
         elif item_id == "map_tile_snap":
             self.map_tile_snap.snap_selected()
         elif item_id == "lane_stopline_snap":
@@ -311,6 +320,8 @@ class LaneBatchUpdateTool:
         self.attribute_preset.unload()
         self.boundary_length.unload()
         self.error_results.unload()
+        self.raster_pyramid.unload()
+        self.raster_compress.unload()
 
     def clear_overlap_highlights(self):
         for highlight in self.overlap_highlights:
