@@ -37,6 +37,7 @@ from qgis.core import (
     NULL,
 )
 from qgis.gui import (
+    QgsAttributeEditorContext,
     QgsAttributeForm,
     QgsMapTool,
     QgsMapToolIdentifyFeature,
@@ -491,7 +492,12 @@ class NewFeatureDialog(QDialog):
         if not names:
             self.preset_grid.addWidget(QLabel("当前图层还没有可用预设。"), 0, 0)
         layout.addWidget(preset_group)
-        self.form = QgsAttributeForm(self.layer, self.feature, parent=self)
+        # 【BUG 修复】明确指定 SingleEditMode，避免 QGIS 默认使用 AddFeatureMode 导致表单自动添加要素。
+        # QgsAttributeForm 在 AddFeatureMode 下会在对话框关闭时自动调用 layer.addFeature()，
+        # 然后我们又显式调用 layer.addFeature(self.feature)，导致重复添加。
+        context = QgsAttributeEditorContext()
+        context.setAttributeFormMode(QgsAttributeEditorContext.SingleEditMode)
+        self.form = QgsAttributeForm(self.layer, self.feature, context, parent=self)
         self.form_scroll = QScrollArea(self)
         self.form_scroll.setWidgetResizable(True)
         self.form_scroll.setWidget(self.form)
@@ -540,34 +546,38 @@ class NewFeatureDialog(QDialog):
             QMessageBox.warning(self, "加载预设失败", str(exc))
 
     def accept(self):
-        # 【BUG 修复】不要调用 self.form.save() / saveEdits()。
-        # QGIS 的 QgsAttributeForm.save() 在 AddFeatureMode 下会**自动调用 layer.addFeature**，
-        # 然后我们又显式调 layer.addFeature(self.feature)，会**重复添加同一根线**（几何相同、属性可能不同），
-        # 表现就是“第一个要素属性被改了/多出一根线”。
-        # 正确做法：手动从 form 的 widgets 中取值写到 self.feature，再由我们 addFeature 一次入库。
+        # 【BUG 修复】使用 SingleEditMode + 手动 addFeature，避免 QGIS 自动添加导致重复线。
+        # 之前的问题：
+        # 1. QgsAttributeForm 默认 AddFeatureMode 会自动调 layer.addFeature()
+        # 2. 我们又显式调 layer.addFeature(self.feature)
+        # 3. 结果：同一条线被添加两次（几何相同，属性可能不同）
+        # 4. 表现：卡顿 + 重复线 + 第一条线属性被改
         if self.form is None:
             QMessageBox.warning(self, "新增失败", "属性表单未初始化。")
             return
-        # 让所有 widget 把当前值提交到 form 内部的 feature 副本里
-        # （用 setFeature(self.form.feature()) 强制刷新一遍，避免 widget 里有未提交的编辑）。
-        try:
-            self.form.setFeature(self.form.feature())
-        except Exception:
-            pass
+        
+        # 从表单读取用户填写的属性值
         updated_feature = self.form.feature()
         if updated_feature is None:
             QMessageBox.warning(self, "新增失败", "无法读取属性表单中的要素。")
             return
-        # 用 form 中（用户实际看到的）属性回写到 self.feature，确保 widget 里的最新修改生效。
+        
+        # 将用户填写的属性应用到要素
         self.feature.setAttributes(updated_feature.attributes())
-        # 再强制覆盖一遍预设字段——双保险，避免 form 内部副本与 self.feature 出现不一致。
+        
+        # 应用预设属性（优先级最高）
         for index, value in self._preset_attributes.items():
             self.feature.setAttribute(index, value)
+        
+        # 手动添加要素（只添加一次）
         if self.layer.addFeature(self.feature):
+            self.layer.updateExtents()
+            self.layer.triggerRepaint()
             QSettings().setValue("LaneBatchUpdate/new_feature_dialog_size", self.size())
             super().accept()
         else:
-            QMessageBox.warning(self, "新增失败", f"无法向图层“{self.layer.name()}”添加要素。")
+            QMessageBox.warning(self, "新增失败", f"无法向图层\"{self.layer.name()}\"添加要素。")
+
 
     def reject(self):
         QSettings().setValue("LaneBatchUpdate/new_feature_dialog_size", self.size())
