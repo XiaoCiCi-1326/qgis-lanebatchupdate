@@ -243,8 +243,38 @@ class LaneFixController:
             if lane_actions:
 
                 progress.setLabelText("正在修复 LANE 边线字段（可多轮）…")
+                
+                # 查找ROAD图层（精确匹配"ROAD"，排除"ROAD_LINK"）
+                self._log("===== 开始查找ROAD图层 =====")
+                road_layer = None
+                all_layers_info = []
+                
+                for layer in QgsProject.instance().mapLayers().values():
+                    layer_name = layer.name()
+                    all_layers_info.append(layer_name)
+                    layer_name_upper = layer_name.upper()
+                    
+                    self._log(f"扫描图层: {layer_name} (大写: {layer_name_upper})")
+                    
+                    # 优先精确匹配"ROAD"（排除ROAD_LINK）
+                    is_exact_road = layer_name_upper == "ROAD"
+                    has_fields = hasattr(layer, 'fields')
+                    
+                    self._log(f"  - 是ROAD图层: {is_exact_road}, 是矢量图层: {has_fields}")
+                    
+                    if is_exact_road and has_fields:
+                        road_layer = layer
+                        self._log(f"✓ 找到ROAD图层: {layer_name}")
+                        break
+                
+                self._log(f"总共扫描了 {len(all_layers_info)} 个图层")
+                self._log(f"所有图层: {' | '.join(all_layers_info)}")
+                
+                if not road_layer:
+                    self._log("警告：未找到ROAD图层，sync_from_road功能将跳过")
+                    self._log("提示：需要名称为'ROAD'的矢量图层")
 
-                engine = LaneFixEngine(lane_layer, self._log)
+                engine = LaneFixEngine(lane_layer, self._log, dry_run=False, road_layer=road_layer)
 
                 stats = engine.apply_all(lane_actions)
 

@@ -16,7 +16,7 @@ from typing import Iterable, List, Optional
 class LaneFixAction:
     """单条改错指令。"""
 
-    action: str  # add / remove / skip / move / copy / swap / fill_from_lrvs / set
+    action: str  # add / remove / skip / move / copy / swap / fill_from_lrvs / set / sync_from_road
     target_field: str
     match_field: str  # ID / ROAD_ID
     match_value: str
@@ -91,6 +91,78 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
 
     compact = re.sub(r"\s+", " ", raw)
 
+    # ==================== 新增：三种自动修复规则 ====================
+    
+    # 【新增#1】路沿石冲突（2m内存在类型0/7/8/11路沿石）
+    # 格式：【问题#1】LINKID=8171411, LANEMARKID=8170848 左侧2m内存在类型0/7/8/11路沿石: 8171390|8171631|8171644
+    # 需要：去 LANE 表，ROAD_ID=8171411 的所有记录，删除 RBDY_L 中的 8170848
+    curb_conflict = re.search(
+        r"LINKID\s*=\s*(\d{6,}).*?LANEMARKID\s*=\s*(\d{6,}).*?([左右])侧.*?2m.*?路沿石.*?[:：]\s*([\d|,\s]+)",
+        compact,
+        re.IGNORECASE,
+    )
+    if curb_conflict:
+        link_id = curb_conflict.group(1)
+        lanemarkid = curb_conflict.group(2)
+        side = curb_conflict.group(3)
+        field = "RBDY_L" if side == "左" else "RBDY_R"
+        return [
+            LaneFixAction(
+                "remove", field, "ROAD_ID", link_id, [lanemarkid], raw,
+                note=f"路沿石冲突：删除 LANEMARKID={lanemarkid}",
+            )
+        ]
+    
+    # 【新增#2】边线一致性：与ROAD图层的RBDY字段保持一致
+    # 格式1：【问题#1】laneID=8171408 左边线应与ROAD_LINK.BDYID_L一致
+    # 格式2：【问题#8】linkid=8170713,laneid=8170713,bdyid_l不一致
+    # 格式1：从 ROAD.RBDY_L/R 同步到 LANE.BDY_LEFT/RIGHT。
+    # 格式2：从 ROAD.RBDY_L/R 同步到同一 ROAD_ID 下 LANE.RBDY_L/R。
+    bdy_consistency = re.search(
+        r"(?:laneID|laneid)\s*=\s*(\d{6,}).*?([左右])边线应与ROAD_LINK\.BDYID_([LR])一致",
+        compact,
+        re.IGNORECASE,
+    )
+    if not bdy_consistency:
+        # 格式2：linkid=xxx,laneid=xxx,bdyid_l不一致
+        bdy_consistency = re.search(
+            r"(?:linkid|LINKID)\s*=\s*(\d{6,}).*?(?:laneid|laneID)\s*=\s*(\d{6,}).*?bdyid_([lr])不一致",
+            compact,
+            re.IGNORECASE,
+        )
+        if bdy_consistency:
+            link_id = bdy_consistency.group(1)
+            lane_id = bdy_consistency.group(2)
+            side_lr = bdy_consistency.group(3).upper()
+            field = f"RBDY_{side_lr}"
+            return [
+                LaneFixAction(
+                    "sync_from_road", field, "ROAD_ID", link_id, [], raw,
+                    note=f"从ROAD图层同步RBDY_{side_lr}到LANE的{field}",
+                )
+            ]
+    
+    if bdy_consistency:
+        lane_id = bdy_consistency.group(1)
+        side = bdy_consistency.group(2)
+        bdyid_side = bdy_consistency.group(3)
+        field = "BDY_LEFT" if side == "左" else "BDY_RIGHT"
+        # 需要找到这个lane的ROAD_ID
+        return [
+            LaneFixAction(
+                "sync_from_road", field, "ID", lane_id, [], raw,
+                note=f"从ROAD图层同步RBDY_{bdyid_side.upper()}到LANE的{field}",
+            )
+        ]
+    
+    # 【新增#3】lmark记录顺序不对（边线A与B顺序错误）
+    # 格式：【问题#4】laneID=8170936 lmark_l记录顺序不对（边线8171466与8170752顺序错误）
+    # 需要：在BDY_LEFT中找到这两个ID，交换它们的顺序，其余ID不动
+    # 注：这个已经在123行有处理，但需要确认是否支持多ID的情况
+    # 已有代码支持，无需修改
+    
+    # ==================== 原有规则 ====================
+
     # 1.3 lane 级别 lmark 缺失边线（左侧/右侧）
     # 格式：【问题#3】当前laneid 4215761 左侧的lmark_l缺失了边线：4215735
     #       当前laneid 4215761 右侧的lmark_r缺失了边线：4215736
@@ -122,20 +194,43 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
     # lmark_r -> BDY_RIGHT, lmark_l -> BDY_LEFT
     if re.search(r"lmark_[lr].*顺序不对", compact, re.IGNORECASE):
         lane_id = _extract_lane_id(compact)
-        seg = re.search(r"边线[（(](\d[\d,，、\s]+?)与(\d[\d,，、\s]+?)顺序错误[）)]", compact)
+        # 优化：支持多种顺序错误格式
+        seg = re.search(r"边线[（(]?(\d{6,})\s*与\s*(\d{6,})\s*顺序错误[）)]?", compact)
         if not seg:
-            seg = re.search(r"(\d{6,})与(\d{6,})顺序错误", compact)
+            seg = re.search(r"(\d{6,})\s*与\s*(\d{6,})\s*顺序错误", compact)
         if seg:
-            a = _digits_from_segment(seg.group(1))
-            b = _digits_from_segment(seg.group(2))
-            mark_ids = (a + b) if a and b else (a or b or [])
-            if lane_id and mark_ids:
+            id_a = seg.group(1).strip()
+            id_b = seg.group(2).strip()
+            if lane_id and id_a and id_b:
                 field = "BDY_RIGHT" if "lmark_r" in compact.lower() else "BDY_LEFT"
                 return [
                     LaneFixAction(
-                        "swap", field, "ID", lane_id, mark_ids[:2], raw,
-                        note=f"{field} 交换顺序",
+                        "swap", field, "ID", lane_id, [id_a, id_b], raw,
+                        note=f"{field} 交换顺序: {id_a}<->{id_b}",
                     )
+                ]
+
+    # LMARK 左右侧位错误：该边线 ID 同时从 LANE 两侧删除，不做左右移动。
+    # 格式：【问题#2】laneID=8170794 ID【8171200】左右侧位错误
+    if "左右侧位错误" in compact and "ID" in compact:
+        mark_match = re.search(
+            r"ID\s*[【\[（(]\s*(\d{6,})\s*[】\]）)]",
+            compact,
+            re.IGNORECASE,
+        )
+        if mark_match:
+            lane_id_for_pos = _extract_lane_id(compact)
+            if lane_id_for_pos:
+                mark_id = mark_match.group(1)
+                return [
+                    LaneFixAction(
+                        "remove", "BDY_LEFT", "ID", lane_id_for_pos, [mark_id], raw,
+                        note=f"左右侧位错误：从BDY_LEFT删除{mark_id}",
+                    ),
+                    LaneFixAction(
+                        "remove", "BDY_RIGHT", "ID", lane_id_for_pos, [mark_id], raw,
+                        note=f"左右侧位错误：从BDY_RIGHT删除{mark_id}",
+                    ),
                 ]
 
     # 1.2 LEFT_RVS groupID 顺序交换

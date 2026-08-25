@@ -35,13 +35,16 @@ _SIGNAL_FIELD_ALIASES = {
 class LaneFixEngine:
     """对齐 ProcessShpFiles：按 Excel 错误表批量改 LANE 边线字段。"""
 
-    def __init__(self, lane_layer: QgsVectorLayer, log_fn: Callable, dry_run: bool = False):
+    def __init__(self, lane_layer: QgsVectorLayer, log_fn: Callable, dry_run: bool = False, road_layer: Optional[QgsVectorLayer] = None):
         self.lane_layer = lane_layer
+        self.road_layer = road_layer
         self.log = log_fn
         self.dry_run = dry_run
         self.field_map = self._build_field_map(lane_layer)
+        self.road_field_map = self._build_road_field_map(road_layer) if road_layer else {}
         self.lane_by_id: Dict[str, int] = {}
         self.lane_by_road: Dict[str, List[int]] = {}
+        self.road_by_id: Dict[str, int] = {}
         self._index_features()
 
     @staticmethod
@@ -84,6 +87,26 @@ class LaneFixEngine:
                     resolved[logical] = actual
                     break
         return resolved
+    
+    def _build_road_field_map(self, layer: QgsVectorLayer) -> Dict[str, str]:
+        """构建ROAD图层字段映射"""
+        if not layer:
+            return {}
+        upper = {field.name().upper(): field.name() for field in layer.fields()}
+        resolved = {}
+        # ROAD图层字段别名
+        road_aliases = {
+            "ID": ("ID", "ROAD_ID", "LINKID", "LINK_ID"),
+            "RBDY_L": ("RBDY_L", "BDYID_L", "bdyid_l"),
+            "RBDY_R": ("RBDY_R", "BDYID_R", "bdyid_r"),
+        }
+        for logical, aliases in road_aliases.items():
+            for alias in aliases:
+                actual = upper.get(alias.upper())
+                if actual:
+                    resolved[logical] = actual
+                    break
+        return resolved
 
     def _index_features(self):
         id_field = self.field_map.get("ID")
@@ -97,6 +120,15 @@ class LaneFixEngine:
                 road_id = self.norm_id(feat[road_field])
                 if road_id:
                     self.lane_by_road.setdefault(road_id, []).append(feat.id())
+        
+        # 索引ROAD图层
+        if self.road_layer:
+            road_id_field = self.road_field_map.get("ID")
+            if road_id_field:
+                for feat in self.road_layer.getFeatures():
+                    road_id = self.norm_id(feat[road_id_field])
+                    if road_id:
+                        self.road_by_id[road_id] = feat.id()
 
     def _resolve_actual_field(self, logical: str) -> Optional[str]:
         # 先按逻辑名查
@@ -544,7 +576,7 @@ class LaneFixEngine:
                     self.log(f"跳过(无字段): {action.target_field}", show_bar=False)
                     continue
 
-                if not action.mark_ids and action.action not in ("skip", "copy", "fill_from_lrvs"):
+                if not action.mark_ids and action.action not in ("skip", "copy", "fill_from_lrvs", "sync_from_road", "set"):
                     stats["skipped"] += 1
                     self.log(f"跳过(无边线ID): {action.source_text[:80]}", show_bar=False)
                     continue
@@ -621,6 +653,13 @@ class LaneFixEngine:
                             )
                             if changed:
                                 feat[target_field] = new_val
+                                self.lane_layer.changeAttributeValue(
+                                    fid,
+                                    feat.fieldNameIndex(target_field),
+                                    new_val,
+                                )
+                                touched.add(fid)
+                                stats["applied"] += 1
                                 self.log(
                                     f"swap OK: lane={action.match_value} {target_field} "
                                     f"{current_val!r} -> {new_val!r}",
@@ -657,6 +696,182 @@ class LaneFixEngine:
                         self.log(
                             f"laneid={action.match_value} move {action.mark_ids} "
                             f"{action.target_field}->{action.target_field_to} OK",
+                            show_bar=False,
+                        )
+                        continue
+                    elif action.action == "set":
+                        # 少数服从多数：查询同组（相同ROAD_ID）中的target_field值，统计出现次数，把少数改成多数
+                        road_field = self._resolve_actual_field("ROAD_ID")
+                        if not road_field:
+                            self.log(
+                                f"跳过(无ROAD_ID字段): lane={action.match_value} set {action.target_field}",
+                                show_bar=False,
+                            )
+                            stats["skipped"] += 1
+                            continue
+                        
+                        # 获取当前lane的ROAD_ID
+                        current_road_id = self.norm_id(feat[road_field])
+                        if not current_road_id:
+                            self.log(
+                                f"跳过(无ROAD_ID): lane={action.match_value} set {action.target_field}",
+                                show_bar=False,
+                            )
+                            stats["skipped"] += 1
+                            continue
+                        
+                        # 获取同组所有lane的target_field值
+                        group_feat_ids = self.lane_by_road.get(current_road_id, [])
+                        if len(group_feat_ids) <= 1:
+                            self.log(
+                                f"跳过(组内只有1条): lane={action.match_value} ROAD_ID={current_road_id}",
+                                show_bar=False,
+                            )
+                            stats["skipped"] += 1
+                            continue
+                        
+                        # 统计target_field值出现次数
+                        value_counts = {}
+                        for group_fid in group_feat_ids:
+                            group_feat = self.lane_layer.getFeature(group_fid)
+                            if not group_feat.isValid():
+                                continue
+                            field_val = self.norm_id(group_feat[target_field])
+                            if field_val:  # 只统计非空值
+                                value_counts[field_val] = value_counts.get(field_val, 0) + 1
+                        
+                        if not value_counts:
+                            self.log(
+                                f"跳过(组内都为空): lane={action.match_value} ROAD_ID={current_road_id} {action.target_field}",
+                                show_bar=False,
+                            )
+                            stats["skipped"] += 1
+                            continue
+                        
+                        # 找出出现次数最多的值（多数）
+                        majority_value = max(value_counts, key=value_counts.get)
+                        majority_count = value_counts[majority_value]
+                        
+                        # 如果当前值已经是多数，跳过
+                        current_val = self.norm_id(feat[target_field])
+                        if current_val == majority_value:
+                            self.log(
+                                f"无需改: lane={action.match_value} {action.target_field}={current_val} 已是多数({majority_count}/{len(group_feat_ids)})",
+                                show_bar=False,
+                            )
+                            continue
+                        
+                        # 改成多数值
+                        new_val = majority_value
+                        changed = True
+                        self.lane_layer.changeAttributeValue(fid, feat.fieldNameIndex(target_field), new_val)
+                        touched.add(fid)
+                        stats["applied"] += 1
+                        self.log(
+                            f"set OK: lane={action.match_value} {target_field} {current_val!r} -> {new_val!r} (多数={majority_count}/{len(group_feat_ids)})",
+                            show_bar=False,
+                        )
+                        continue
+                    elif action.action == "sync_from_road":
+                        # 从ROAD图层同步RBDY字段到LANE的BDY字段
+                        if not self.road_layer:
+                            self.log(
+                                f"跳过(无ROAD图层): lane={action.match_value} sync_from_road",
+                                show_bar=False,
+                            )
+                            stats["skipped"] += 1
+                            continue
+                        
+                        # 获取ROAD_ID
+                        road_field = self._resolve_actual_field("ROAD_ID")
+                        if not road_field:
+                            self.log(
+                                f"跳过(无ROAD_ID字段): lane={action.match_value}",
+                                show_bar=False,
+                            )
+                            stats["skipped"] += 1
+                            continue
+                        
+                        current_road_id = self.norm_id(feat[road_field])
+                        if not current_road_id:
+                            self.log(
+                                f"跳过(ROAD_ID为空): lane={action.match_value}",
+                                show_bar=False,
+                            )
+                            stats["skipped"] += 1
+                            continue
+                        
+                        # 从ROAD图层获取RBDY值
+                        road_fid = self.road_by_id.get(current_road_id)
+                        if not road_fid:
+                            self.log(
+                                f"跳过(ROAD图层无此ID): ROAD_ID={current_road_id}",
+                                show_bar=False,
+                            )
+                            stats["skipped"] += 1
+                            continue
+                        
+                        road_feat = self.road_layer.getFeature(road_fid)
+                        if not road_feat.isValid():
+                            self.log(
+                                f"跳过(ROAD要素无效): ROAD_ID={current_road_id}",
+                                show_bar=False,
+                            )
+                            stats["skipped"] += 1
+                            continue
+                        
+                        # 确定ROAD图层的源字段（RBDY_L或RBDY_R）
+                        if target_field.endswith("LEFT") or target_field.endswith("_L") or "lmark_l" in target_field.lower():
+                            road_source_field = self.road_field_map.get("RBDY_L")
+                        else:
+                            road_source_field = self.road_field_map.get("RBDY_R")
+                        
+                        if not road_source_field:
+                            self.log(
+                                f"跳过(ROAD图层无RBDY字段): {target_field}",
+                                show_bar=False,
+                            )
+                            stats["skipped"] += 1
+                            continue
+                        
+                        # 读取ROAD的RBDY值
+                        road_rbdy_value = road_feat[road_source_field]
+                        if self.is_empty(road_rbdy_value):
+                            self.log(
+                                f"跳过(ROAD的RBDY为空): ROAD_ID={current_road_id} {road_source_field}",
+                                show_bar=False,
+                            )
+                            stats["skipped"] += 1
+                            continue
+                        
+                        # 同步到LANE的BDY字段
+                        current_val = feat[target_field]
+                        normalized_road_val = str(road_rbdy_value).strip()
+                        normalized_current = str(current_val).strip() if not self.is_empty(current_val) else ""
+                        
+                        if normalized_current == normalized_road_val:
+                            self.log(
+                                f"无需改: lane={action.match_value} {target_field}={normalized_current} 已与ROAD一致",
+                                show_bar=False,
+                            )
+                            continue
+                        
+                        # 写入LANE图层
+                        # 同步到所有同组的lane
+                        group_feat_ids = self.lane_by_road.get(current_road_id, [])
+                        sync_count = 0
+                        for group_fid in group_feat_ids:
+                            self.lane_layer.changeAttributeValue(
+                                group_fid,
+                                self.lane_layer.fields().indexFromName(target_field),
+                                normalized_road_val
+                            )
+                            touched.add(group_fid)
+                            sync_count += 1
+                        
+                        stats["applied"] += sync_count
+                        self.log(
+                            f"sync_from_road OK: ROAD_ID={current_road_id} {road_source_field}={normalized_road_val} -> {sync_count}条LANE.{target_field}",
                             show_bar=False,
                         )
                         continue
@@ -769,14 +984,28 @@ class LaneFixEngine:
             "rounds": 0,
         }
         for round_no in range(1, 3):
-            stats = self.apply_actions(actions)
+            # swap 不是幂等操作，第二轮重复执行会把顺序交换回来。
+            round_actions = (
+                actions
+                if round_no == 1
+                else [action for action in actions if action.action != "swap"]
+            )
+            if not round_actions:
+                break
+
+            stats = self.apply_actions(round_actions)
             total["rounds"] = round_no
             for key in ("applied", "skipped", "not_found", "features_updated"):
                 total[key] += stats[key]
             self._index_features()
             if stats["applied"] == 0:
                 break
-            self.log(f"第 {round_no} 轮改错完成，继续检查…", show_bar=False)
+
+            has_next_round_actions = any(
+                action.action != "swap" for action in actions
+            )
+            if has_next_round_actions and round_no < 2:
+                self.log(f"第 {round_no} 轮改错完成，继续检查…", show_bar=False)
         return total
 
 

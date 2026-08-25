@@ -86,14 +86,35 @@ class ExcelPreviewController:
     @staticmethod
     def _get_layer_by_name(name: str):
         project = QgsProject.instance()
-        layers = project.mapLayersByName(name)
-        if layers:
-            return layers[0]
+        wanted = name.strip().casefold()
         for layer in project.mapLayers().values():
-            src = os.path.basename(layer.source().split("|", 1)[0])
-            if src.lower() == f"{name.lower()}.shp":
+            layer_name = (layer.name() or "").strip().casefold()
+            if layer_name == wanted:
+                return layer
+            source_path = layer.source().split("|", 1)[0]
+            source_name = os.path.splitext(os.path.basename(source_path))[0]
+            if source_name.strip().casefold() == wanted:
                 return layer
         return None
+
+    @staticmethod
+    def _find_exact_road_layer():
+        """查找名称为 ROAD 的矢量图层，不把 ROAD_LINK 当作 ROAD。"""
+        project = QgsProject.instance()
+        candidates = []
+        for layer in project.mapLayers().values():
+            layer_name = (layer.name() or "").strip()
+            source_path = layer.source().split("|", 1)[0]
+            source_name = os.path.splitext(os.path.basename(source_path))[0].strip()
+            candidates.append(
+                f"{layer.name()} [矢量={isinstance(layer, QgsVectorLayer)}, "
+                f"源名={source_name or '-'}]"
+            )
+            if not isinstance(layer, QgsVectorLayer):
+                continue
+            if layer_name.casefold() == "road" or source_name.casefold() == "road":
+                return layer, candidates
+        return None, candidates
 
     # ---------- 解析 + 行号 ----------
 
@@ -151,6 +172,7 @@ class ExcelPreviewController:
             QMessageBox.critical(None, "图层缺失", "请先在 QGIS 中加载 LANE 图层")
             return
 
+        road_layer, layer_candidates = self._find_exact_road_layer()
         roadlink_layer = self._get_layer_by_name("ROAD_LINK")
         signal_layer = self._get_layer_by_name("SIGNAL")
 
@@ -166,6 +188,19 @@ class ExcelPreviewController:
         self.log_lines = []
         self._log(f"错误表格: {excel_path}")
         self._log(f"LANE 图层: {lane_layer.name()} ({lane_layer.source()})")
+        self._log("===== 查找精确 ROAD 图层 =====", show_bar=False)
+        self._log("当前工程图层: " + " | ".join(layer_candidates), show_bar=False)
+        if road_layer:
+            self._log(
+                f"找到 ROAD 图层: {road_layer.name()} ({road_layer.source()})",
+                show_bar=False,
+            )
+        else:
+            self._log(
+                "未找到名称为 ROAD 的矢量图层；ROAD_LINK 不会作为 ROAD 使用",
+                level="WARN",
+                show_bar=False,
+            )
         if roadlink_layer:
             self._log(f"ROAD_LINK 图层: {roadlink_layer.name()}", show_bar=False)
         if signal_layer:
@@ -203,6 +238,7 @@ class ExcelPreviewController:
                     selected,
                     dry_run,
                     lane_layer,
+                    road_layer,
                     roadlink_layer,
                     signal_layer,
                 ),
@@ -232,6 +268,7 @@ class ExcelPreviewController:
         selected: List[LaneFixAction],
         dry_run: bool,
         lane_layer: QgsVectorLayer,
+        road_layer: Optional[QgsVectorLayer],
         roadlink_layer: Optional[QgsVectorLayer],
         signal_layer: Optional[QgsVectorLayer],
     ) -> Optional[Dict]:
@@ -251,7 +288,12 @@ class ExcelPreviewController:
         try:
             if lane_actions:
                 self._log(f"{mode}LANE {len(lane_actions)} 条")
-                engine = LaneFixEngine(lane_layer, self._log, dry_run=dry_run)
+                engine = LaneFixEngine(
+                    lane_layer,
+                    self._log,
+                    dry_run=dry_run,
+                    road_layer=road_layer,
+                )
                 stats["LANE"] = engine.apply_all(lane_actions)
                 lane_layer.triggerRepaint()
                 # 给每条 action 写状态

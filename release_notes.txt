@@ -1,0 +1,17 @@
+## v1.0.4.64 更新内容
+
+### Bug 修复
+- 修复 LANE 边线顺序交换在多轮检查中被重复执行、最终交换回原顺序的问题。
+- 支持 `LMARK_L/R` 顺序错误解析，分别对 `BDY_LEFT/BDY_RIGHT` 指定边线执行一次交换。
+- 修复 LMARK 边线左右侧位错误：从对应 LANE 的 `BDY_LEFT` 和 `BDY_RIGHT` 同时删除错误 ID。
+- 修复 ROAD 图层匹配逻辑，避免误把 `ROAD_LINK` 当作 `ROAD` 使用。
+- 改进 Excel 预览表格的字段列显示和排序。
+
+### 功能改进
+- 支持从精确匹配的 ROAD 图层同步 RBDY 字段到 LANE。
+- 增加 LANE/ROAD 边线修复过程日志和执行状态反馈。
+
+### 安装说明
+1. 下载 `lanebatchupdate_v1.0.4.64.zip`。
+2. 解压到 QGIS 插件目录。
+3. 重启 QGIS 并启用插件。

@@ -47,6 +47,7 @@ ACTION_LABELS = {
     "set": "设置",
     "skip": "跳过",
     "fill_from_lrvs": "五级补全",
+    "sync_from_road": "从ROAD同步",
 }
 
 ACTION_COLORS = {
@@ -55,6 +56,7 @@ ACTION_COLORS = {
     "swap": QColor("#a06800"),
     "move": QColor("#5a3a8c"),
     "fill_from_lrvs": QColor("#1e5a8a"),
+    "sync_from_road": QColor("#0066cc"),
     "skip": QColor("#666666"),
 }
 
@@ -114,19 +116,31 @@ class ExcelPreviewDialog(QDialog):
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        
+        # 启用排序（除了复选框列）
+        self.table.setSortingEnabled(False)  # 先禁用，填充完数据后再启用
+        
         hdr = self.table.horizontalHeader()
         hdr.setSectionResizeMode(COL_CHECK, QHeaderView.ResizeToContents)
         hdr.setSectionResizeMode(COL_ROW, QHeaderView.ResizeToContents)
         hdr.setSectionResizeMode(COL_LAYER, QHeaderView.ResizeToContents)
         hdr.setSectionResizeMode(COL_ACTION, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(COL_FIELD, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(COL_TARGET, QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(COL_FIELD, QHeaderView.Interactive)
+        hdr.setSectionResizeMode(COL_TARGET, QHeaderView.Interactive)
         hdr.setSectionResizeMode(COL_NOTE, QHeaderView.Stretch)
         hdr.setSectionResizeMode(COL_STATUS, QHeaderView.ResizeToContents)
+        
+        # 设置列宽度
+        self.table.setColumnWidth(COL_FIELD, 150)
+        self.table.setColumnWidth(COL_TARGET, 200)
+        
         self.table.setColumnHidden(COL_SOURCE, True)
         self.table.setSelectionMode(QTableWidget.ExtendedSelection)  # 支持 Shift / Ctrl 多选框选
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
         self.table.itemChanged.connect(self._on_item_changed)
+        
+        # 点击表头排序
+        hdr.sectionClicked.connect(self._on_header_clicked)
 
         # ---------- 底部按钮 ----------
         bottom = QHBoxLayout()
@@ -156,6 +170,7 @@ class ExcelPreviewDialog(QDialog):
         我们退而求其次：source_text 行号 = 第几次 parse_error_texts 返回的第几条动作。
         为了保留行号信息，controller 在传入前会 setattr(action, 'excel_row', row)。"""
         self.table.blockSignals(True)
+        self.table.setSortingEnabled(False)  # 填充数据时禁用排序
         try:
             self.table.setRowCount(0)
             for idx, action in enumerate(self._actions):
@@ -164,6 +179,7 @@ class ExcelPreviewDialog(QDialog):
             self._refresh_status_label()
         finally:
             self.table.blockSignals(False)
+            self.table.setSortingEnabled(True)  # 填充完成后启用排序
 
     def _append_row(self, idx: int, action: LaneFixAction, row_no: int):
         r = self.table.rowCount()
@@ -175,7 +191,10 @@ class ExcelPreviewDialog(QDialog):
         chk.setData(Qt.UserRole, idx)
         self.table.setItem(r, COL_CHECK, chk)
 
-        self.table.setItem(r, COL_ROW, QTableWidgetItem(str(row_no)))
+        # Excel行号：使用数值类型以支持数值排序
+        row_item = QTableWidgetItem()
+        row_item.setData(Qt.DisplayRole, row_no)  # 数值类型
+        self.table.setItem(r, COL_ROW, row_item)
 
         layer_item = QTableWidgetItem(action.layer or "LANE")
         self.table.setItem(r, COL_LAYER, layer_item)
@@ -204,6 +223,16 @@ class ExcelPreviewDialog(QDialog):
         self.table.setItem(r, COL_STATUS, status_item)
 
         self.table.setItem(r, COL_SOURCE, QTableWidgetItem(action.source_text or ""))
+
+    # ---------- 排序处理 ----------
+    
+    def _on_header_clicked(self, logical_index):
+        """点击表头排序（保持复选框列不排序）"""
+        if logical_index == COL_CHECK:
+            return  # 复选框列不排序
+        
+        # QTableWidget的排序会自动处理
+        # 这里只是为了禁止复选框列排序
 
     # ---------- 过滤 / 状态 ----------
 
