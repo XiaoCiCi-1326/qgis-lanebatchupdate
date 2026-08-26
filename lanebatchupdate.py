@@ -27,6 +27,7 @@ from .inertial_follow_controller import InertialFollowController
 from .map_tile_snap_controller import MapTileSnapController
 from .lane_stopline_snap_controller import LaneStoplineSnapController
 from .lane_boundary_join_controller import LaneBoundaryJoinController
+from .aligned_split_controller import AlignedSplitController
 from .attribute_preset_controller import AttributePresetController
 from .boundary_length_controller import BoundaryLengthController
 from .error_results_controller import ErrorResultsController
@@ -63,6 +64,7 @@ class LaneBatchUpdateTool:
         self.map_tile_snap = MapTileSnapController(iface, self.plugin_dir)
         self.lane_stopline_snap = LaneStoplineSnapController(iface, self.plugin_dir)
         self.lane_boundary_join = LaneBoundaryJoinController(iface, self.plugin_dir)
+        self.aligned_split = AlignedSplitController(iface, self.plugin_dir)
         self.attribute_preset = AttributePresetController(iface, self.plugin_dir)
         self.error_results = ErrorResultsController(iface)
         self.boundary_length = BoundaryLengthController(iface, self.plugin_dir, self.error_results)
@@ -123,6 +125,7 @@ class LaneBatchUpdateTool:
         self.map_tile_snap.initGui(self.actions)
         self.lane_stopline_snap.initGui(self.actions)
         self.lane_boundary_join.initGui(self.actions)
+        self.aligned_split.initGui(self.actions)
         self.attribute_preset.initGui(self.actions)
         self.boundary_length.initGui(self.actions, register_action=False)
         self.raster_pyramid.initGui(self.actions)
@@ -205,6 +208,7 @@ class LaneBatchUpdateTool:
                 ("map_tile_snap", "吸附到范围框", "icon_map_tile_snap.svg"),
                 ("lane_stopline_snap", "LANE 吸附 STOPLINE", "icon_lane_stopline_snap.svg"),
                 ("lane_boundary_join", "LANE/BOUNDARY 接边", "icon_lane_boundary_join.svg"),
+                ("aligned_split", "平齐打断", "icon_aligned_split.svg"),
             ],
             "属性预设": [
                 ("attribute_preset", "属性预设", "icon_attribute_preset.svg"),
@@ -266,6 +270,8 @@ class LaneBatchUpdateTool:
             self.lane_stopline_snap.snap_selected()
         elif item_id == "lane_boundary_join":
             self.lane_boundary_join.join_selected()
+        elif item_id == "aligned_split":
+            self.aligned_split.start()
         elif item_id == "attribute_preset":
             self.attribute_preset.show()
         elif item_id == "add_feature":
@@ -317,6 +323,7 @@ class LaneBatchUpdateTool:
         self.map_tile_snap.unload()
         self.lane_stopline_snap.unload()
         self.lane_boundary_join.unload()
+        self.aligned_split.unload()
         self.attribute_preset.unload()
         self.boundary_length.unload()
         self.error_results.unload()
