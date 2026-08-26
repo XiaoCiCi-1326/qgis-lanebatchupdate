@@ -10,6 +10,7 @@ from qgis.PyQt.QtWidgets import QAction, QMessageBox
 from qgis.core import (
     Qgis,
     QgsCoordinateTransform,
+    QgsDistanceArea,
     QgsFeature,
     QgsFeatureRequest,
     QgsGeometry,
@@ -144,7 +145,7 @@ class AlignedSplitMapTool(QgsMapTool):
         if aligned and len(self.points) >= 2:
             cutter_points = self._extended_ray(self.points[-2], self.points[-1])
         if cutter_points is not None and len(cutter_points) >= 2:
-            self.controller.split_crossed_features(self.layer, cutter_points, aligned)
+            self.controller.split_crossed_features(cutter_points, aligned)
         else:
             self.controller.iface.messageBar().pushMessage(
                 "平齐打断", "至少需要两个点才能完成切割线。", Qgis.Info, duration=3
@@ -203,24 +204,35 @@ class AlignedSplitController:
             self.action.setChecked(False)
 
     def start(self):
-        layer = self.iface.activeLayer()
-        if not isinstance(layer, QgsVectorLayer) or not layer.isValid():
-            self._reject_layer("请先激活需要分割的线或面图层。")
+        layers = self._target_layers()
+        if not layers:
+            self._reject_layer("请在图层面板选中需要处理的线或面图层；选 1 个处理 1 个，选多个则同时处理多个。")
             return
-        if layer.geometryType() not in (QgsWkbTypes.LineGeometry, QgsWkbTypes.PolygonGeometry):
-            self._reject_layer("平齐打断仅支持线图层和面图层。")
+        unavailable = []
+        editable_layers = []
+        for layer in layers:
+            if layer.isEditable() or layer.startEditing():
+                editable_layers.append(layer)
+            else:
+                unavailable.append(layer.name())
+        if not editable_layers:
+            self._reject_layer("所选图层均无法进入编辑状态。", "无法编辑")
             return
-        if not layer.isEditable() and not layer.startEditing():
-            self._reject_layer(f"无法开启 {layer.name()} 图层编辑。", "无法编辑")
-            return
-        self.map_tool = AlignedSplitMapTool(self, layer)
+        self.map_tool = AlignedSplitMapTool(self, editable_layers[0])
         self.iface.mapCanvas().setMapTool(self.map_tool)
-        self.iface.messageBar().pushMessage(
-            "平齐打断",
-            "左键绘制切割线，右键普通分割；按住 Shift 按最近两点方向显示射线并平齐打断；点击吸附线顶点可直接拆线。",
-            Qgis.Info,
-            duration=10,
-        )
+        message = "左键绘制切割线，右键对图层面板选中的可编辑图层分割；按住 Shift 使用方向射线，并将附近线端点延伸吸附到射线。"
+        if unavailable:
+            message += f" 已跳过不可编辑图层：{', '.join(unavailable)}。"
+        self.iface.messageBar().pushMessage("平齐打断", message, Qgis.Info, duration=12)
+
+    def _target_layers(self):
+        selected = [
+            layer for layer in self.iface.layerTreeView().selectedLayers()
+            if isinstance(layer, QgsVectorLayer)
+            and layer.isValid()
+            and layer.geometryType() in (QgsWkbTypes.LineGeometry, QgsWkbTypes.PolygonGeometry)
+        ]
+        return selected
 
     def _reject_layer(self, message, title="图层类型不支持"):
         QMessageBox.warning(self.iface.mainWindow(), title, message)
@@ -266,7 +278,26 @@ class AlignedSplitController:
         nearby = QgsPointXY(origin.x() + canvas_tolerance, origin.y())
         return max(1e-12, QgsPointXY(transform.transform(origin)).distance(QgsPointXY(transform.transform(nearby))))
 
-    def split_crossed_features(self, layer, canvas_points, aligned):
+    def split_crossed_features(self, canvas_points, aligned):
+        results = []
+        for layer in self._target_layers():
+            if not layer.isEditable():
+                continue
+            result = self._split_layer(layer, canvas_points, aligned)
+            if result is not None:
+                results.append(result)
+        if not results:
+            self.iface.messageBar().pushMessage("平齐打断", "切割线没有穿过可分割的要素。", Qgis.Warning, duration=5)
+            return
+        split_count = sum(result[0] for result in results)
+        snapped_count = sum(result[1] for result in results)
+        layer_names = "、".join(result[2] for result in results)
+        summary = f"已处理 {len(results)} 个图层（{layer_names}）：分割 {split_count} 个要素"
+        if aligned:
+            summary += f"，端点吸附 {snapped_count} 条"
+        self.iface.messageBar().pushMessage("平齐打断", summary, Qgis.Info, duration=9)
+
+    def _split_layer(self, layer, canvas_points, aligned):
         try:
             transform = QgsCoordinateTransform(
                 self.iface.mapCanvas().mapSettings().destinationCrs(), layer.crs(), QgsProject.instance()
@@ -274,27 +305,25 @@ class AlignedSplitController:
             cutter_points = [QgsPointXY(transform.transform(point)) for point in canvas_points]
             cutter = QgsGeometry.fromPolylineXY(cutter_points)
         except Exception as exc:
-            QMessageBox.warning(self.iface.mainWindow(), "坐标转换失败", str(exc))
-            return
+            QMessageBox.warning(self.iface.mainWindow(), f"{layer.name()} 坐标转换失败", str(exc))
+            return None
         if cutter.isEmpty() or cutter.length() == 0.0:
-            return
+            return None
 
         selected_ids = set(layer.selectedFeatureIds())
         if selected_ids and not aligned:
             source = (layer.getFeature(feature_id) for feature_id in selected_ids)
-            scope = "选中的"
         else:
             source = layer.getFeatures(QgsFeatureRequest().setFilterRect(cutter.boundingBox()))
-            scope = "所有相交"
         candidates = self._split_candidates(source, cutter, cutter_points)
-        if not candidates:
-            self.iface.messageBar().pushMessage("平齐打断", "切割线没有穿过可分割的要素。", Qgis.Warning, duration=5)
-            return
-        command = "按同一切割线平齐分割要素" if aligned else "分割要素"
-        if self._apply_splits(layer, candidates, command):
-            self.iface.messageBar().pushMessage(
-                "平齐打断", f"已分割 {len(candidates)} 个{scope}要素，可用 Ctrl+Z 一次撤销。", Qgis.Info, duration=7
-            )
+        split_ids = {feature.id() for feature, _, _ in candidates}
+        endpoint_updates = self._nearby_endpoint_updates(layer, cutter_points, split_ids) if aligned else []
+        if not candidates and not endpoint_updates:
+            return None
+        command = "按同一切割线平齐分割与端点吸附" if aligned else "分割要素"
+        if not self._apply_layer_updates(layer, candidates, endpoint_updates, command):
+            return None
+        return len(candidates), len(endpoint_updates), layer.name()
 
     @staticmethod
     def _split_candidates(features, cutter, cutter_points):
@@ -309,7 +338,75 @@ class AlignedSplitController:
                 candidates.append((feature, first_part, new_parts))
         return candidates
 
+    def _nearby_endpoint_updates(self, layer, cutter_points, excluded_ids):
+        if layer.geometryType() != QgsWkbTypes.LineGeometry:
+            return []
+        tolerance = self._three_meter_tolerance(layer)
+        cutter_start, cutter_end = cutter_points
+        updates = []
+        for feature in layer.getFeatures():
+            if feature.id() in excluded_ids:
+                continue
+            geometry = feature.geometry()
+            if geometry is None or geometry.isEmpty():
+                continue
+            parts = geometry.asMultiPolyline() if geometry.isMultipart() else [geometry.asPolyline()]
+            changed = False
+            replacement_parts = [[QgsPointXY(vertex) for vertex in part] for part in parts]
+            for part in replacement_parts:
+                if len(part) < 2:
+                    continue
+                for endpoint_index, neighbor_index in ((0, 1), (-1, -2)):
+                    endpoint = part[endpoint_index]
+                    intersection = self._extension_intersection(
+                        endpoint, part[neighbor_index], cutter_start, cutter_end, tolerance
+                    )
+                    if intersection is not None:
+                        part[endpoint_index] = intersection
+                        changed = True
+            if changed:
+                updates.append((feature.id(), self._line_geometry(replacement_parts)))
+        return updates
+
+    def _three_meter_tolerance(self, layer):
+        distance_area = QgsDistanceArea()
+        distance_area.setSourceCrs(layer.crs(), QgsProject.instance().transformContext())
+        distance_area.setEllipsoid(QgsProject.instance().ellipsoid())
+        origin = self.iface.mapCanvas().center()
+        transform = QgsCoordinateTransform(
+            self.iface.mapCanvas().mapSettings().destinationCrs(), layer.crs(), QgsProject.instance()
+        )
+        layer_origin = QgsPointXY(transform.transform(origin))
+        probe = QgsPointXY(layer_origin.x() + 1.0, layer_origin.y())
+        meters_per_unit = distance_area.measureLine(layer_origin, probe)
+        return 3.0 / max(meters_per_unit, 1e-12)
+
+    @staticmethod
+    def _extension_intersection(endpoint, neighbor, cutter_start, cutter_end, tolerance):
+        direction_x = endpoint.x() - neighbor.x()
+        direction_y = endpoint.y() - neighbor.y()
+        cutter_x = cutter_end.x() - cutter_start.x()
+        cutter_y = cutter_end.y() - cutter_start.y()
+        determinant = direction_x * cutter_y - direction_y * cutter_x
+        if abs(determinant) <= 1e-12:
+            return None
+        offset_x = cutter_start.x() - endpoint.x()
+        offset_y = cutter_start.y() - endpoint.y()
+        extension_factor = (offset_x * cutter_y - offset_y * cutter_x) / determinant
+        if extension_factor < 0.0:
+            return None
+        intersection = QgsPointXY(
+            endpoint.x() + direction_x * extension_factor,
+            endpoint.y() + direction_y * extension_factor,
+        )
+        if endpoint.distance(intersection) > tolerance:
+            return None
+        return intersection
+
     def _apply_splits(self, layer, candidates, command):
+        return self._apply_layer_updates(layer, candidates, [], command)
+
+    def _apply_layer_updates(self, layer, candidates, endpoint_updates, command):
         layer.beginEditCommand(command)
         try:
             for feature, first_part, new_parts in candidates:
@@ -321,6 +418,9 @@ class AlignedSplitController:
                     new_feature.setGeometry(part)
                     if not layer.addFeature(new_feature):
                         raise RuntimeError(f"无法新增要素 {feature.id()} 的分割段。")
+            for feature_id, replacement in endpoint_updates:
+                if not layer.changeGeometry(feature_id, replacement):
+                    raise RuntimeError(f"无法吸附要素 {feature_id} 的端点。")
             layer.endEditCommand()
         except Exception as exc:
             layer.destroyEditCommand()
