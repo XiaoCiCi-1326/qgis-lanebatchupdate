@@ -22,6 +22,7 @@ RELEASE_FILES = (
     "attribute_preset_controller.py",
     "boundary_length_controller.py",
     "error_results_controller.py",
+    "js2jd_convert_controller.py",
     "metadata.txt",
     "icon.png",
     "icon_speed.png",
@@ -48,6 +49,7 @@ RELEASE_FILES = (
     "icon_toggle_layout.svg",
     "icon_raster_pyramid.svg",
     "icon_raster_compress.svg",
+    "icon_js2jd_convert.svg",
     "lane_fix_excel.py",
     "lane_fix_engine.py",
     "lane_fix_controller.py",
@@ -140,10 +142,10 @@ def main():
     print("开始发布流程...")
     print("=" * 50)
 
-    print("\n[1/3] 备份当前版本...")
+    print("\n[1/4] 备份当前版本...")
     backup_path = backup_current_version()
 
-    print("\n[2/3] 打包发布文件...")
+    print("\n[2/4] 打包发布文件...")
     version = read_version()
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_name = f"lanebatchupdate_v{version}_{stamp}"
@@ -184,7 +186,21 @@ def main():
     if missing:
         raise SystemExit(f"缺少文件: {missing}")
 
-    print(f"\n[3/3] 创建 ZIP 包...")
+    print(f"\n[3/4] 复制 js2data 工具目录...")
+    js2data_src = PLUGIN_DIR / "js2data"
+    js2data_dst = plugin_out / "js2data"
+    
+    if not js2data_src.exists():
+        print("  警告: js2data 目录不存在，跳过复制")
+    else:
+        shutil.copytree(
+            js2data_src,
+            js2data_dst,
+            ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc", ".gitignore")
+        )
+        print(f"  已复制 js2data 到发布包")
+
+    print(f"\n[4/4] 创建 ZIP 包...")
 
     if zip_path.exists():
         zip_path.unlink()
@@ -205,6 +221,9 @@ def main():
     print(f"文件数: {len(copied)}")
     for name in copied:
         print(f"  - {name}")
+    if js2data_src.exists():
+        print(f"  - js2data/ (转换工具目录)")
+
 
 
 if __name__ == "__main__":

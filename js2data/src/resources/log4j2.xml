@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration>
+  <Appenders>
+    <Console name="STDOUT" target="SYSTEM_OUT">
+      <PatternLayout pattern="%d %-5p %c{2} [%t] - %m%n"/>
+    </Console>
+    
+    <File name="log" fileName="logs/js2xs.log" append="false">
+       <PatternLayout pattern="%d %-5p - %m%n"/>
+    </File>
+    
+  </Appenders>
+  <Loggers>
+    <Logger name="org.apache.log4j.xml" level="info"/>
+    <Root level="info">
+      <AppenderRef ref="STDOUT"/>
+       
+      <AppenderRef ref="log"/>
+       
+    </Root>
+  </Loggers>
+</Configuration>

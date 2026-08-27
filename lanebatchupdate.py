@@ -33,6 +33,7 @@ from .boundary_length_controller import BoundaryLengthController
 from .error_results_controller import ErrorResultsController
 from .raster_pyramid_controller import RasterPyramidController
 from .raster_compress_controller import RasterCompressController
+from .js2jd_convert_controller import Js2jdConvertController
 
 
 class LaneBatchUpdateTool:
@@ -44,6 +45,7 @@ class LaneBatchUpdateTool:
     MODE_FIX_LANE_NUM = "fix_lane_num"
     MODE_SHOW_ERROR_RESULTS = "show_error_results"
     MODE_CLEAR_ALL_HIGHLIGHTS = "clear_all_highlights"
+    MODE_JS2JD_CONVERT = "js2jd_convert"
 
     def __init__(self, iface):
         self.iface = iface
@@ -70,6 +72,7 @@ class LaneBatchUpdateTool:
         self.boundary_length = BoundaryLengthController(iface, self.plugin_dir, self.error_results)
         self.raster_pyramid = RasterPyramidController(iface, self.plugin_dir)
         self.raster_compress = RasterCompressController(iface, self.plugin_dir)
+        self.js2jd_convert = Js2jdConvertController(iface, self.plugin_dir, self.log)
         self.error_results.configure_checkers(
             self.run_check_right_straight_overlap,
             self.boundary_length.apply_filter,
@@ -109,6 +112,7 @@ class LaneBatchUpdateTool:
             (self.MODE_SHOW_ERROR_RESULTS, "全部规则", "icon_error_results.svg"),
             (self.MODE_FIX_LANE_NUM, "修复 LANE_NUM", "icon_lane_num_fix.svg"),
             (self.MODE_CLEAR_ALL_HIGHLIGHTS, "取消全部高亮", "icon_clear_right_straight.svg"),
+            (self.MODE_JS2JD_CONVERT, "Js2jd 转换", "icon_js2jd_convert.svg"),
             (self.MODE_REMOVE_ALL, "移除所有图层", "icon_remove_layers.svg"),
         )
         for mode, label, icon_name in buttons:
@@ -130,6 +134,7 @@ class LaneBatchUpdateTool:
         self.boundary_length.initGui(self.actions, register_action=False)
         self.raster_pyramid.initGui(self.actions)
         self.raster_compress.initGui(self.actions)
+        self.js2jd_convert.initGui(self.actions)
 
         # 根据保存的模式初始化工具栏布局
         print(f"[LaneBatchUpdate] 当前工具栏模式: {self.toolbar_mode}")
@@ -221,6 +226,7 @@ class LaneBatchUpdateTool:
             "辅助工具": [
                 ("inertial_follow", "惯导地图跟随", "icon_inertial_follow.svg"),
                 ("raster_pyramid", "TIF 生成金字塔", "icon_raster_pyramid.svg"),
+                (self.MODE_JS2JD_CONVERT, "Js2jd 转换", "icon_js2jd_convert.svg"),
                 (self.MODE_REMOVE_ALL, "移除所有图层", "icon_remove_layers.svg"),
             ],
         }
@@ -246,7 +252,8 @@ class LaneBatchUpdateTool:
     def _handle_menu_action(self, item_id):
         if item_id in [self.MODE_SPEED, self.MODE_SET_ROAD2, self.MODE_VIRTUAL, 
                        self.MODE_SHOW_ERROR_RESULTS, self.MODE_FIX_LANE_NUM, 
-                       self.MODE_CLEAR_ALL_HIGHLIGHTS, self.MODE_REMOVE_ALL]:
+                       self.MODE_CLEAR_ALL_HIGHLIGHTS, self.MODE_JS2JD_CONVERT, 
+                       self.MODE_REMOVE_ALL]:
             self.run(mode=item_id)
         elif item_id == "reconstruct_prep":
             self.reconstruct.run("reconstruct_prep")
@@ -1974,6 +1981,10 @@ class LaneBatchUpdateTool:
     def run(self, mode):
         if mode == self.MODE_REMOVE_ALL:
             self.remove_all_layers()
+            return
+
+        if mode == self.MODE_JS2JD_CONVERT:
+            self.js2jd_convert.run()
             return
 
         self.begin_run()
