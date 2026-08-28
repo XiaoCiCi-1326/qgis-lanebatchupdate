@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
 """
 文件名搜索工具
-功能：选中 .shp 图层中的要素，用 Windows 资源管理器自动搜索这些要素的 file_name 字段值对应的文件
+功能：选中 .shp 图层中的要素，用 Windows 资源管理器搜索这些要素的 file_name 字段值对应的文件
 """
-from qgis.PyQt.QtWidgets import QMessageBox
+from qgis.PyQt.QtWidgets import QMessageBox, QApplication
 from qgis.PyQt.QtGui import QIcon
-from qgis.PyQt.QtCore import QTimer
 from qgis.core import Qgis
 import os
 import subprocess
@@ -71,26 +70,23 @@ class FileNameSearchController:
             QMessageBox.critical(None, "错误", f"无法找到文件夹：{folder}")
             return
 
-        search_query = " OR ".join(f'"{name}"' for name in file_names)
+        search_text = " ".join(file_names)
+        QApplication.clipboard().setText(search_text)
 
         try:
-            cmd = f'explorer.exe "search-ms:query={search_query}&crumb=location:{folder}&"'
-            subprocess.Popen(cmd, shell=True)
-
-            self.iface.messageBar().pushMessage(
+            subprocess.Popen(['explorer.exe', folder])
+            
+            msg = f"已打开文件夹并复制 {len(file_names)} 个文件名到剪贴板\n\n"
+            msg += "操作步骤：\n"
+            msg += "1. 在资源管理器右上角搜索框点击\n"
+            msg += "2. 按 Ctrl+V 粘贴文件名\n"
+            msg += "3. 按回车搜索\n\n"
+            msg += f"文件名: {search_text[:100]}" + ("..." if len(search_text) > 100 else "")
+            
+            QMessageBox.information(
+                None,
                 "文件名搜索",
-                f"已在资源管理器中搜索 {len(file_names)} 个文件名",
-                Qgis.Info,
-                duration=5
+                msg
             )
         except Exception as e:
-            try:
-                subprocess.Popen(f'explorer.exe "{folder}"')
-                self.iface.messageBar().pushMessage(
-                    "文件名搜索",
-                    f"已打开文件夹 {os.path.basename(folder)}，请手动搜索",
-                    Qgis.Warning,
-                    duration=5
-                )
-            except Exception as e2:
-                QMessageBox.critical(None, "错误", f"无法打开资源管理器：{str(e2)}")
+            QMessageBox.critical(None, "错误", f"无法打开资源管理器：{str(e)}")
