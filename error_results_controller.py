@@ -2,6 +2,9 @@
 """管理检测规则并显示错误记录。"""
 from qgis.PyQt.QtCore import QSettings, Qt
 from qgis.PyQt.QtGui import QColor
+import os
+import re
+import sqlite3
 from qgis.PyQt.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -102,11 +105,121 @@ class ErrorResultsController:
     def show(self, title="全部规则"):
         if self.dialog is None:
             self.dialog = ErrorResultsDialog(self, self.iface.mainWindow())
+        try:
+            self.load_latest_quality_errors()
+        except (FileNotFoundError, RuntimeError, sqlite3.Error):
+            pass
         self.dialog.setWindowTitle(title)
         self.dialog.show_rules()
         self.dialog.show()
         self.dialog.raise_()
         self.dialog.activateWindow()
+
+    def load_latest_quality_errors(self, folder=r"D:\check_error"):
+        """读取最新的 QGIS 3.16/JD 质检库并转换为错误记录。"""
+        candidates = []
+        if os.path.isdir(folder):
+            for name in os.listdir(folder):
+                path = os.path.join(folder, name)
+                if name.lower().startswith("temp.sqlite") and os.path.isfile(path):
+                    candidates.append(path)
+        if not candidates:
+            raise FileNotFoundError("未找到 D:\\check_error\\temp.sqlite* 质检文件")
+
+        database_path = max(candidates, key=os.path.getmtime)
+        records = []
+        connection = sqlite3.connect("file:%s?mode=ro" % database_path.replace("\\", "/"), uri=True)
+        try:
+            columns = [row[1].upper() for row in connection.execute("PRAGMA table_info(ERROR_LOG)")]
+            if not columns:
+                raise RuntimeError("质检库缺少 ERROR_LOG 表")
+            rows = connection.execute("SELECT * FROM ERROR_LOG ORDER BY ID").fetchall()
+            for row in rows:
+                data = dict(zip(columns, row))
+                record = self._quality_error_record(data)
+                if record is not None:
+                    records.append(record)
+        finally:
+            connection.close()
+
+        self.records = [record for record in self.records if "quality_source" not in record]
+        self.records.extend(records)
+        if self.dialog is not None:
+            self.dialog.refresh(self.records)
+        return database_path, records
+
+    @staticmethod
+    def _quality_error_record(data):
+        layer_names = {
+            "LANE_MARKING": "BOUNDARY",
+            "LANE": "LANE",
+            "TRAFFICLIGHT": "SIGNAL",
+        }
+        source_layer = str(data.get("LAYER") or "").strip().upper()
+        primary_layer = layer_names.get(source_layer, source_layer)
+        selections = {}
+        display_ids = {}
+        display_layers = {}
+
+        def add_selection(source_name, raw_ids):
+            target_name = layer_names.get(str(source_name or "").strip().upper(), str(source_name or "").strip().upper())
+            ids = [
+                item.strip().strip("'\"")
+                for item in re.split(r"[,;|]", str(raw_ids or ""))
+                if item.strip().strip("'\"")
+            ]
+            if not target_name or not ids:
+                return
+            layer = ErrorResultsController._find_vector_layer(target_name)
+            feature_ids = []
+            if layer is not None:
+                field_names = {field.name().upper(): field.name() for field in layer.fields()}
+                id_field = field_names.get("ID")
+                if id_field:
+                    wanted = set(ids)
+                    for feature in layer.getFeatures():
+                        value = str(feature[id_field]).strip()
+                        if value in wanted:
+                            feature_ids.append(feature.id())
+                else:
+                    feature_ids = [int(value) for value in ids if value.lstrip("-").isdigit()]
+            display_key = layer.id() if layer is not None else target_name
+            display_ids[display_key] = ids
+            display_layers[display_key] = layer.name() if layer is not None else target_name
+            if feature_ids and layer is not None:
+                selections[layer.id()] = list(dict.fromkeys(feature_ids))
+
+        add_selection(primary_layer, data.get("FEATUREID"))
+        add_selection(data.get("REF_LAYER_1"), data.get("RL_1_FIELD_1_IS"))
+        add_selection(data.get("REF_LAYER_2"), data.get("RL_1_FIELD_2_IS"))
+        detail = str(data.get("DETAIL") or "").strip()
+        rule = str(data.get("RULENO") or "").strip()
+        level = str(data.get("ERRORLEVEL") or "").strip()
+        return {
+            "type": "3.16质检规则 %s" % rule if rule else "3.16质检错误",
+            "message": "[%s] %s" % (level, detail) if level else detail,
+            "selections": selections,
+            "display_layers": display_layers,
+            "display_ids": display_ids,
+            "quality_source": data,
+        }
+
+    @staticmethod
+    def _find_vector_layer(name):
+        if not name:
+            return None
+        project = QgsProject.instance()
+        layers = project.mapLayersByName(name)
+        if layers:
+            return next((layer for layer in layers if isinstance(layer, QgsVectorLayer)), None)
+        target = "%s.shp" % name.lower()
+        for layer in project.mapLayers().values():
+            if not isinstance(layer, QgsVectorLayer):
+                continue
+            source = layer.source().split("|", 1)[0]
+            if os.path.basename(source).lower() == target:
+                return layer
+        return None
 
     def select_record(self, record):
         project = QgsProject.instance()
@@ -321,6 +434,9 @@ class ErrorResultsDialog(QDialog):
         layout.addWidget(self.progress_bar)
 
         buttons = QHBoxLayout()
+        self.run_quality_button = QPushButton("读取最新 3.16 质检错误", page)
+        self.run_quality_button.clicked.connect(self._load_quality_errors)
+        buttons.addWidget(self.run_quality_button)
         self.run_rules_button = QPushButton("执行选中规则", page)
         self.run_rules_button.clicked.connect(self._run_selected_rules)
         buttons.addWidget(self.run_rules_button)
@@ -375,15 +491,16 @@ class ErrorResultsDialog(QDialog):
             selections = record.get("selections", {})
             display_ids = record.get("display_ids", {})
             display_layers = record.get("display_layers", {})
+            display_keys = list(dict.fromkeys(list(display_ids.keys()) + list(selections.keys())))
             layers = ", ".join(
-                display_layers.get(layer_key, layer_key) for layer_key in selections.keys()
+                display_layers.get(layer_key, layer_key) for layer_key in display_keys
             )
             involved = "; ".join(
                 "%s: %s" % (
                     display_layers.get(layer_key, layer_key),
-                    ", ".join(str(value) for value in display_ids.get(layer_key, ids)),
+                    ", ".join(str(value) for value in display_ids.get(layer_key, selections.get(layer_key, []))),
                 )
-                for layer_key, ids in selections.items()
+                for layer_key in display_keys
             )
             self.table.setItem(row, 2, QTableWidgetItem(layers))
             self.table.setItem(row, 3, QTableWidgetItem(involved))
@@ -440,6 +557,19 @@ class ErrorResultsDialog(QDialog):
         self.progress_bar.setValue(value)
         self.progress_label.setText(message)
         QApplication.processEvents()
+
+    def _load_quality_errors(self):
+        try:
+            path, records = self.controller.load_latest_quality_errors()
+        except (FileNotFoundError, RuntimeError, sqlite3.Error) as exc:
+            QMessageBox.critical(self, "读取质检错误失败", str(exc))
+            return
+        self.refresh(self.controller.records)
+        self.tabs.setCurrentWidget(self.results_page)
+        self.summary.setText(
+            "已读取最新质检库：%s，共 %d 条错误记录。点击一行可选中涉及要素。"
+            % (os.path.basename(path), len(records))
+        )
 
     def _run_selected_rules(self):
         selected_rules = []

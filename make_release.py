@@ -52,6 +52,7 @@ RELEASE_FILES = (
     "icon_raster_compress.svg",
     "icon_js2jd_convert.svg",
     "icon_filename_search.svg",
+    "icon_filename_copy.svg",
     "lane_fix_excel.py",
     "lane_fix_engine.py",
     "lane_fix_controller.py",

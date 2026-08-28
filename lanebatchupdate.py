@@ -160,11 +160,15 @@ class LaneBatchUpdateTool:
     def _apply_flat_mode(self):
         """应用平铺模式 - 所有按钮都显示在工具栏"""
         for action in self.actions:
-            self.iface.addVectorToolBarIcon(action)
+            if action is self.filename_search.search_action:
+                self.filename_search.add_toolbar_button()
+            else:
+                self.iface.addVectorToolBarIcon(action)
 
     def _apply_toolbar_mode(self):
         """切换工具栏模式 - 移除所有按钮后重新应用"""
         # 移除所有 action（包括主文件和子控制器的）
+        self.filename_search.remove_toolbar_button()
         for action in self.actions:
             try:
                 self.iface.removeVectorToolBarIcon(action)
@@ -231,6 +235,7 @@ class LaneBatchUpdateTool:
                 ("raster_pyramid", "TIF 生成金字塔", "icon_raster_pyramid.svg"),
                 (self.MODE_JS2JD_CONVERT, "Js2jd 转换", "icon_js2jd_convert.svg"),
                 ("filename_search", "搜索文件名", "icon_filename_search.svg"),
+                ("filename_copy_results", "复制搜索结果", "icon_filename_copy.svg"),
                 (self.MODE_REMOVE_ALL, "移除所有图层", "icon_remove_layers.svg"),
             ],
         }
@@ -291,6 +296,8 @@ class LaneBatchUpdateTool:
                 self.attribute_preset._toggle_add_feature(not current_state)
         elif item_id == "filename_search":
             self.filename_search.search_files()
+        elif item_id == "filename_copy_results":
+            self.filename_search.copy_search_results()
 
     def unload(self):
         self.clear_overlap_highlights()
