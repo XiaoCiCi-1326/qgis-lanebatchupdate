@@ -34,6 +34,7 @@ from .error_results_controller import ErrorResultsController
 from .raster_pyramid_controller import RasterPyramidController
 from .raster_compress_controller import RasterCompressController
 from .js2jd_convert_controller import Js2jdConvertController
+from .filename_search_controller import FileNameSearchController
 
 
 class LaneBatchUpdateTool:
@@ -73,6 +74,7 @@ class LaneBatchUpdateTool:
         self.raster_pyramid = RasterPyramidController(iface, self.plugin_dir)
         self.raster_compress = RasterCompressController(iface, self.plugin_dir)
         self.js2jd_convert = Js2jdConvertController(iface, self.plugin_dir, self.log)
+        self.filename_search = FileNameSearchController(iface, self.plugin_dir)
         self.error_results.configure_checkers(
             self.run_check_right_straight_overlap,
             self.boundary_length.apply_filter,
@@ -135,6 +137,7 @@ class LaneBatchUpdateTool:
         self.raster_pyramid.initGui(self.actions)
         self.raster_compress.initGui(self.actions)
         self.js2jd_convert.initGui(self.actions)
+        self.filename_search.initGui(self.actions)
 
         # 根据保存的模式初始化工具栏布局
         print(f"[LaneBatchUpdate] 当前工具栏模式: {self.toolbar_mode}")
@@ -227,6 +230,7 @@ class LaneBatchUpdateTool:
                 ("inertial_follow", "惯导地图跟随", "icon_inertial_follow.svg"),
                 ("raster_pyramid", "TIF 生成金字塔", "icon_raster_pyramid.svg"),
                 (self.MODE_JS2JD_CONVERT, "Js2jd 转换", "icon_js2jd_convert.svg"),
+                ("filename_search", "搜索文件名", "icon_filename_search.svg"),
                 (self.MODE_REMOVE_ALL, "移除所有图层", "icon_remove_layers.svg"),
             ],
         }
@@ -285,6 +289,8 @@ class LaneBatchUpdateTool:
             if self.attribute_preset.add_feature_action:
                 current_state = self.attribute_preset.add_feature_action.isChecked()
                 self.attribute_preset._toggle_add_feature(not current_state)
+        elif item_id == "filename_search":
+            self.filename_search.search_files()
 
     def unload(self):
         self.clear_overlap_highlights()
@@ -336,6 +342,7 @@ class LaneBatchUpdateTool:
         self.error_results.unload()
         self.raster_pyramid.unload()
         self.raster_compress.unload()
+        self.js2jd_convert.unload()
 
     def clear_overlap_highlights(self):
         for highlight in self.overlap_highlights:
