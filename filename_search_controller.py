@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
 """
 文件名搜索工具
-功能：选中 .shp 图层中的要素，用 Windows 资源管理器搜索这些要素的 file_name 字段值对应的文件
+功能：选中 .shp 图层中的要素，用 Windows 资源管理器自动搜索这些要素的 file_name 字段值对应的文件
 """
-from qgis.PyQt.QtWidgets import QMessageBox, QApplication
+from qgis.PyQt.QtWidgets import QMessageBox
 from qgis.PyQt.QtGui import QIcon
 from qgis.core import Qgis
 import os
 import subprocess
+import tempfile
 
 
 class FileNameSearchController:
@@ -70,23 +71,46 @@ class FileNameSearchController:
             QMessageBox.critical(None, "错误", f"无法找到文件夹：{folder}")
             return
 
-        search_text = " ".join(file_names)
-        QApplication.clipboard().setText(search_text)
+        search_query = " OR ".join(f'"{name}"' for name in file_names)
+
+        ps_script = f'''
+$folder = "{folder.replace(chr(92), chr(92)*2)}"
+$searchQuery = @"
+{search_query}
+"@
+
+Start-Process explorer.exe -ArgumentList "search-ms:query=$searchQuery&crumb=location:$folder"
+'''
 
         try:
-            subprocess.Popen(['explorer.exe', folder])
-            
-            msg = f"已打开文件夹并复制 {len(file_names)} 个文件名到剪贴板\n\n"
-            msg += "操作步骤：\n"
-            msg += "1. 在资源管理器右上角搜索框点击\n"
-            msg += "2. 按 Ctrl+V 粘贴文件名\n"
-            msg += "3. 按回车搜索\n\n"
-            msg += f"文件名: {search_text[:100]}" + ("..." if len(search_text) > 100 else "")
-            
-            QMessageBox.information(
-                None,
+            temp_ps = tempfile.NamedTemporaryFile(mode='w', suffix='.ps1', delete=False, encoding='utf-8')
+            temp_ps.write(ps_script)
+            temp_ps.close()
+
+            subprocess.Popen(
+                ['powershell.exe', '-ExecutionPolicy', 'Bypass', '-File', temp_ps.name],
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+
+            try:
+                os.unlink(temp_ps.name)
+            except:
+                pass
+
+            self.iface.messageBar().pushMessage(
                 "文件名搜索",
-                msg
+                f"已在资源管理器中自动搜索 {len(file_names)} 个文件名",
+                Qgis.Info,
+                duration=5
             )
         except Exception as e:
-            QMessageBox.critical(None, "错误", f"无法打开资源管理器：{str(e)}")
+            try:
+                subprocess.Popen(['explorer.exe', folder])
+                self.iface.messageBar().pushMessage(
+                    "文件名搜索",
+                    f"已打开文件夹 {os.path.basename(folder)}（自动搜索失败，请手动搜索）",
+                    Qgis.Warning,
+                    duration=5
+                )
+            except Exception as e2:
+                QMessageBox.critical(None, "错误", f"无法打开资源管理器：{str(e2)}")
