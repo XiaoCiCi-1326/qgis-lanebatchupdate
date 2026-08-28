@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """
 文件名搜索工具
-功能：选中 .shp 图层中的要素，用 Windows 资源管理器自动搜索这些要素的 file_name 字段值对应的文件
+功能：选中 .shp 图层中的要素，自动搜索这些要素的 file_name 字段值对应的文件并在资源管理器中选中
 """
 from qgis.PyQt.QtWidgets import QMessageBox
 from qgis.PyQt.QtGui import QIcon
 from qgis.core import Qgis
 import os
 import subprocess
-import tempfile
+import glob
 
 
 class FileNameSearchController:
@@ -36,8 +36,20 @@ class FileNameSearchController:
             shp_path = layer_source
         return os.path.normpath(os.path.dirname(shp_path))
 
+    def _search_files_in_folder(self, folder, file_names):
+        """在文件夹中搜索文件"""
+        found_files = []
+        
+        for root, dirs, files in os.walk(folder):
+            for file_name in file_names:
+                for file in files:
+                    if file_name.lower() in file.lower():
+                        found_files.append(os.path.join(root, file))
+        
+        return found_files
+
     def search_files(self):
-        """获取选中要素的 file_name 字段值，用资源管理器搜索"""
+        """获取选中要素的 file_name 字段值，自动搜索文件"""
         layer = self.iface.activeLayer()
         if layer is None:
             QMessageBox.critical(None, "错误", "请先选择一个图层")
@@ -71,46 +83,49 @@ class FileNameSearchController:
             QMessageBox.critical(None, "错误", f"无法找到文件夹：{folder}")
             return
 
-        search_query = " OR ".join(f'"{name}"' for name in file_names)
+        self.iface.messageBar().pushMessage(
+            "文件名搜索",
+            f"正在搜索 {len(file_names)} 个文件...",
+            Qgis.Info,
+            duration=3
+        )
 
-        ps_script = f'''
-$folder = "{folder.replace(chr(92), chr(92)*2)}"
-$searchQuery = @"
-{search_query}
-"@
+        found_files = self._search_files_in_folder(folder, file_names)
 
-Start-Process explorer.exe -ArgumentList "search-ms:query=$searchQuery&crumb=location:$folder"
-'''
-
-        try:
-            temp_ps = tempfile.NamedTemporaryFile(mode='w', suffix='.ps1', delete=False, encoding='utf-8')
-            temp_ps.write(ps_script)
-            temp_ps.close()
-
-            subprocess.Popen(
-                ['powershell.exe', '-ExecutionPolicy', 'Bypass', '-File', temp_ps.name],
-                creationflags=subprocess.CREATE_NO_WINDOW
-            )
-
-            try:
-                os.unlink(temp_ps.name)
-            except:
-                pass
-
-            self.iface.messageBar().pushMessage(
-                "文件名搜索",
-                f"已在资源管理器中自动搜索 {len(file_names)} 个文件名",
-                Qgis.Info,
-                duration=5
-            )
-        except Exception as e:
-            try:
-                subprocess.Popen(['explorer.exe', folder])
-                self.iface.messageBar().pushMessage(
-                    "文件名搜索",
-                    f"已打开文件夹 {os.path.basename(folder)}（自动搜索失败，请手动搜索）",
-                    Qgis.Warning,
-                    duration=5
-                )
-            except Exception as e2:
-                QMessageBox.critical(None, "错误", f"无法打开资源管理器：{str(e2)}")
+        if found_files:
+            if len(found_files) == 1:
+                try:
+                    subprocess.Popen(['explorer.exe', '/select,', found_files[0]])
+                    self.iface.messageBar().pushMessage(
+                        "文件名搜索",
+                        f"找到 1 个文件并已在资源管理器中选中",
+                        Qgis.Success,
+                        duration=5
+                    )
+                except Exception as e:
+                    QMessageBox.critical(None, "错误", f"无法打开资源管理器：{str(e)}")
+            else:
+                try:
+                    result_folder = os.path.dirname(found_files[0])
+                    subprocess.Popen(['explorer.exe', '/select,', found_files[0]])
+                    
+                    msg = f"找到 {len(found_files)} 个文件\n\n"
+                    msg += "已在资源管理器中打开第一个文件所在位置：\n\n"
+                    for i, f in enumerate(found_files[:10], 1):
+                        msg += f"{i}. {os.path.basename(f)}\n"
+                    if len(found_files) > 10:
+                        msg += f"\n... 还有 {len(found_files) - 10} 个文件"
+                    
+                    QMessageBox.information(None, "搜索结果", msg)
+                except Exception as e:
+                    QMessageBox.critical(None, "错误", f"无法打开资源管理器：{str(e)}")
+        else:
+            msg = f"在文件夹中未找到匹配的文件\n\n"
+            msg += f"搜索位置: {folder}\n\n"
+            msg += "搜索的文件名:\n"
+            for name in file_names[:10]:
+                msg += f"- {name}\n"
+            if len(file_names) > 10:
+                msg += f"... 还有 {len(file_names) - 10} 个"
+            
+            QMessageBox.warning(None, "未找到文件", msg)
