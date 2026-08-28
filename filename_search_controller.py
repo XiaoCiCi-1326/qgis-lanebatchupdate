@@ -36,12 +36,12 @@ class FileNameSearchController:
             shp_path = layer_source
         return os.path.normpath(os.path.dirname(shp_path))
 
-    def _extract_key_pattern(self, filename):
-        """提取文件名中的关键数字模式，如 -168_-211"""
+    def _extract_grid_name(self, filename):
+        """从 file_name 提取坐标并生成 grid_ 前缀的搜索名。"""
         match = re.search(r'-?\d+_-?\d+', filename)
         if match:
-            return match.group(0)
-        return filename
+            return f"grid_{match.group(0)}"
+        return None
 
     def _open_explorer_search(self, folder, search_query):
         """在资源管理器中打开搜索窗口"""
@@ -100,14 +100,15 @@ class FileNameSearchController:
 
         search_patterns = []
         for name in file_names:
-            key = self._extract_key_pattern(name)
-            # 添加通配符，匹配包含该模式的所有文件
-            search_patterns.append(f"*{key}*")
+            grid_name = self._extract_grid_name(name)
+            if grid_name and grid_name not in search_patterns:
+                search_patterns.append(grid_name)
 
-        if len(search_patterns) == 1:
-            search_query = search_patterns[0]
-        else:
-            search_query = " OR ".join(search_patterns)
+        if not search_patterns:
+            QMessageBox.warning(None, "无可搜索名称", "file_name 中未找到坐标格式，例如 -218_-14。")
+            return
+
+        search_query = " OR ".join(search_patterns)
 
         success = self._open_explorer_search(folder, search_query)
 
