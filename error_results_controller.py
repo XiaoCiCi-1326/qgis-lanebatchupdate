@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """管理检测规则并显示错误记录。"""
 from qgis.PyQt.QtCore import QSettings, Qt
-from qgis.PyQt.QtGui import QColor
+from qgis.PyQt.QtGui import QColor, QKeySequence
 import os
 import re
 import sqlite3
+from datetime import datetime
 from qgis.PyQt.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -16,7 +17,9 @@ from qgis.PyQt.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QProgressBar,
+    QPlainTextEdit,
     QPushButton,
+    QMessageBox,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -32,6 +35,27 @@ from qgis.core import (
     QgsWkbTypes,
 )
 from qgis.gui import QgsRubberBand
+from .lane_fix_excel import LaneFixAction, parse_error_texts
+from .lane_fix_engine import LaneFixEngine
+
+
+class CopyableTableWidget(QTableWidget):
+    """不可编辑但可选择单元格文本，并支持 Ctrl+C 复制。"""
+
+    def keyPressEvent(self, event):
+        if event.matches(QKeySequence.Copy):
+            indexes = self.selectedIndexes()
+            if indexes:
+                rows = {}
+                for index in indexes:
+                    rows.setdefault(index.row(), {})[index.column()] = index.data(Qt.DisplayRole) or ""
+                text = "\n".join(
+                    "\t".join(cols.get(col, "") for col in range(self.columnCount()))
+                    for _, cols in sorted(rows.items())
+                )
+                QApplication.clipboard().setText(text)
+                return
+        super().keyPressEvent(event)
 
 
 class ErrorResultsController:
@@ -50,6 +74,98 @@ class ErrorResultsController:
         self.lane_num_checker = None
         self.clear_highlights_callback = None
         self.location_marker = None
+        self._fix_log_path = None
+        self._fix_log_lines = []
+
+    def _log(self, text, level="INFO", show_bar=True):
+        line = f"{datetime.now():%Y-%m-%d %H:%M:%S} [{level}] {text}"
+        if self._fix_log_path is not None:
+            self._fix_log_lines.append(line)
+        if show_bar:
+            self.iface.messageBar().pushMessage("车道工具", str(text), duration=4)
+
+    def fix_quality_records(self, records):
+        """修复选中的 3.16 质检记录；当前支持 marktype=11 全局移除规则。"""
+        self._fix_log_lines = []
+        log_dir = os.path.join(os.path.dirname(__file__), "log")
+        os.makedirs(log_dir, exist_ok=True)
+        self._fix_log_path = os.path.join(log_dir, f"quality_fix_{datetime.now():%Y%m%d_%H%M%S}.log")
+        actions = []
+        for record in records:
+            source = record.get("quality_source") or {}
+            detail = str(source.get("DETAIL") or record.get("message") or "")
+            # 质检库常把 LANE_MARKING、LANEMARKID 放在独立列，DETAIL
+            # 只保存“marktype 是 11 ...”的描述；组合字段后再解析。
+            combined = " ".join(
+                str(source.get(key) or "")
+                for key in ("LAYER", "FEATUREID", "LANEMARKID", "MARKTYPE", "DETAIL")
+            )
+            parsed = parse_error_texts(combined)
+            self._log(
+                "质检原始字段: LAYER=%r FEATUREID=%r LANEMARKID=%r MARKTYPE=%r DETAIL=%r"
+                % (source.get("LAYER"), source.get("FEATUREID"), source.get("LANEMARKID"), source.get("MARKTYPE"), detail),
+                show_bar=False,
+            )
+            self._log(f"组合解析文本: {combined}", show_bar=False)
+            if not parsed:
+                layer = str(source.get("LAYER") or "").upper()
+                mark_type = str(source.get("MARKTYPE") or "")
+                is_marktype11 = re.search(r"(?:是|=|:)\s*11\b|\b11\b", mark_type + " " + detail)
+                is_outer_type_error = re.search(
+                    r"最外侧边界.*?边线类型\s*(?:为|是|=|:)\s*[19](?:\s*或\s*[19])?",
+                    detail,
+                    re.IGNORECASE,
+                )
+                if layer == "LANE_MARKING" and (is_marktype11 or is_outer_type_error):
+                    mark_id_match = re.search(r"LANEMARKID\s*[=:：]?\s*(\d{6,})", combined, re.I)
+                    if not mark_id_match:
+                        mark_id_match = re.search(r"\b(\d{6,})\b", str(source.get("FEATUREID") or ""))
+                    if mark_id_match and re.search(r"最外侧边界|外侧边界", detail):
+                        parsed = [LaneFixAction(
+                            "remove_mark_global", "RBDY_L/R", "", "",
+                            [mark_id_match.group(1)], combined,
+                            note=f"marktype=11：从 LANE 的 RBDY_L/R 移除 {mark_id_match.group(1)}",
+                        )]
+            actions.extend(parsed)
+            self._log(
+                "解析动作: %s" % ([{"action": a.action, "mark_ids": a.mark_ids, "field": a.target_field} for a in parsed]),
+                show_bar=False,
+            )
+        actions = [a for a in actions if a.action == "remove_mark_global"]
+        if not actions:
+            self._write_fix_log()
+            QMessageBox.information(self.iface.mainWindow(), "没有可修复记录", "选中的记录中没有当前支持的自动修复规则。")
+            return None
+        layers = QgsProject.instance().mapLayersByName("LANE")
+        lane = next((x for x in layers if isinstance(x, QgsVectorLayer)), None)
+        if lane is None:
+            self._log("未找到名称为 LANE 的矢量图层", level="ERROR", show_bar=False)
+            self._write_fix_log()
+            QMessageBox.warning(self.iface.mainWindow(), "缺少 LANE 图层", "请先加载 LANE 图层。")
+            return None
+        try:
+            self._log("LANE图层: name=%r source=%r feature_count=%d" % (lane.name(), lane.source(), lane.featureCount()), show_bar=False)
+            self._log("LANE字段: %s" % [field.name() for field in lane.fields()], show_bar=False)
+            stats = LaneFixEngine(lane, self._log).apply_all(actions)
+            lane.triggerRepaint()
+            self._log("修复统计: %s" % stats, show_bar=False)
+            self._write_fix_log()
+            QMessageBox.information(self.iface.mainWindow(), "修复完成", "已处理 %d 条记录，更新 %d 条 LANE 要素。\n日志：%s" % (len(actions), stats.get("features_updated", 0), self._fix_log_path))
+            return stats
+        except Exception as exc:
+            self._log("异常: %r" % (exc,), level="ERROR", show_bar=False)
+            self._write_fix_log()
+            QMessageBox.critical(self.iface.mainWindow(), "修复失败", str(exc))
+            return None
+
+    def _write_fix_log(self):
+        if not self._fix_log_path:
+            return
+        try:
+            with open(self._fix_log_path, "w", encoding="utf-8-sig") as handle:
+                handle.write("\n".join(self._fix_log_lines) + "\n")
+        except OSError:
+            pass
 
     def configure_checkers(
         self,
@@ -450,19 +566,30 @@ class ErrorResultsDialog(QDialog):
         layout = QVBoxLayout(page)
         self.summary = QLabel(page)
         layout.addWidget(self.summary)
-        self.table = QTableWidget(0, 4, page)
+        self.table = CopyableTableWidget(0, 4, page)
         self.table.setHorizontalHeaderLabels(["检测类型", "错误记录", "涉及图层", "涉及要素"])
-        self.table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.table.setSelectionMode(QTableWidget.SingleSelection)
+        self.table.setSelectionBehavior(QTableWidget.SelectItems)
+        self.table.setSelectionMode(QTableWidget.ExtendedSelection)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.itemSelectionChanged.connect(self._select_current_record)
+        self.table.itemDoubleClicked.connect(self._fix_double_clicked)
         layout.addWidget(self.table, 1)
+        self.detail_edit = QPlainTextEdit(page)
+        self.detail_edit.setReadOnly(True)
+        self.detail_edit.setPlaceholderText("选中错误记录后，可在此按字符选择并复制错误文本。")
+        self.detail_edit.setMaximumHeight(90)
+        self.detail_edit.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
+        layout.addWidget(self.detail_edit)
         buttons = QHBoxLayout()
         clear_button = QPushButton("清空记录", page)
         clear_button.clicked.connect(self._clear_results)
         buttons.addWidget(clear_button)
+        fix_button = QPushButton("修复选中错误", page)
+        fix_button.setToolTip("支持 Shift/Ctrl 多选；双击单条记录也可修复")
+        fix_button.clicked.connect(self._fix_selected_records)
+        buttons.addWidget(fix_button)
         buttons.addStretch(1)
         layout.addLayout(buttons)
         return page
@@ -637,7 +764,35 @@ class ErrorResultsDialog(QDialog):
             return
         item = self.table.item(row, 0)
         if item is not None:
-            self.controller.select_record(item.data(Qt.UserRole))
+            record = item.data(Qt.UserRole)
+            self.controller.select_record(record)
+            source = record.get("quality_source", {}) if isinstance(record, dict) else {}
+            detail = str(source.get("DETAIL") or record.get("message") or "")
+            self.detail_edit.setPlainText(detail)
+
+    def _selected_records(self):
+        records = []
+        seen = set()
+        rows = sorted({index.row() for index in self.table.selectionModel().selectedIndexes()})
+        for row in rows:
+            item = self.table.item(row, 0)
+            record = item.data(Qt.UserRole) if item else None
+            if record is not None and id(record) not in seen:
+                records.append(record)
+                seen.add(id(record))
+        return records
+
+    def _fix_double_clicked(self, item):
+        record = self.table.item(item.row(), 0).data(Qt.UserRole)
+        if record:
+            self.controller.fix_quality_records([record])
+
+    def _fix_selected_records(self):
+        records = self._selected_records()
+        if not records:
+            QMessageBox.warning(self, "未选择记录", "请使用 Ctrl/Shift 选择要修复的错误记录。")
+            return
+        self.controller.fix_quality_records(records)
 
     def closeEvent(self, event):
         self._save_boundary_settings()

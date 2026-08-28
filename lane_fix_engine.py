@@ -72,9 +72,9 @@ class LaneFixEngine:
         if LaneFixEngine.is_empty(raw):
             return []
         return [
-            LaneFixEngine.norm_id(part)
+            LaneFixEngine.norm_id(part.strip().strip("'\"[](){}"))
             for part in re.split(r"[|,;；]", str(raw))
-            if LaneFixEngine.norm_id(part)
+            if LaneFixEngine.norm_id(part.strip().strip("'\"[](){}"))
         ]
 
     def _build_field_map(self, layer: QgsVectorLayer) -> Dict[str, str]:
@@ -560,6 +560,56 @@ class LaneFixEngine:
                     )
                     continue
 
+                # 质检规则：LANE_MARKING marktype=11。全局扫描 LANE 的两侧
+                # RBDY 字段并只移除指定 ID，保留其它关联及分隔符结构。
+                if action.action == "remove_mark_global":
+                    changed_count = 0
+                    scanned_count = 0
+                    field_names = []
+                    value_samples = []
+                    for logical in ("RBDY_L", "RBDY_R"):
+                        resolved = self._resolve_actual_field(logical)
+                        if resolved:
+                            field_names.append(resolved)
+                    self.log(
+                        f"全局移除开始: mark_ids={action.mark_ids}, fields={field_names}, "
+                        f"lane_features={self.lane_layer.featureCount()}", show_bar=False
+                    )
+                    if not field_names:
+                        self.log("全局移除失败: 未解析到 RBDY_L/R 字段", level="ERROR", show_bar=False)
+                    for feat in self.lane_layer.getFeatures():
+                        scanned_count += 1
+                        feature_changed = False
+                        for logical in ("RBDY_L", "RBDY_R"):
+                            field = self._resolve_actual_field(logical)
+                            if not field:
+                                continue
+                            if len(value_samples) < 20 and not self.is_empty(feat[field]):
+                                value_samples.append(f"fid={feat.id()} {field}={feat[field]!r}")
+                            new_val, changed = self._remove_ids(feat[field], action.mark_ids)
+                            if changed:
+                                self.lane_layer.changeAttributeValue(
+                                    feat.id(), feat.fieldNameIndex(field), new_val or None
+                                )
+                                feature_changed = True
+                                touched.add(feat.id())
+                        if feature_changed:
+                            changed_count += 1
+                    if changed_count:
+                        stats["applied"] += changed_count
+                        stats["features_updated"] += changed_count
+                        self.log(
+                            f"全局移除 RBDY_L/R 边线ID={action.mark_ids}，更新 {changed_count} 条 LANE",
+                            show_bar=False,
+                        )
+                    else:
+                        stats["skipped"] += 1
+                        self.log(
+                            f"未找到 RBDY_L/R 中的边线ID={action.mark_ids}（已扫描 {scanned_count} 条）；"
+                            f"样例: {value_samples}", show_bar=False
+                        )
+                    continue
+
                 target_field = self._resolve_actual_field(action.target_field)
                 target_field_to = self._resolve_actual_field(action.target_field_to)
                 if action.action in ("move", "copy"):
@@ -598,6 +648,18 @@ class LaneFixEngine:
                     continue
 
                 feat_ids = self._find_feature_ids(action)
+                # 某些 SHP 的 ID 字段被导出为文本/浮点格式，按 lane ID
+                # 索引可能找不到；顺序修复可退回按目标字段中两个边线 ID 定位。
+                if not feat_ids and action.action == "swap" and target_field:
+                    wanted = set(action.mark_ids[:2])
+                    for candidate in self.lane_layer.getFeatures():
+                        if wanted.issubset(set(self.split_ids(candidate[target_field]))):
+                            feat_ids.append(candidate.id())
+                    if feat_ids:
+                        self.log(
+                            f"swap 按 {target_field} 中边线ID回退定位: {action.mark_ids} -> {feat_ids}",
+                            level="WARN", show_bar=False,
+                        )
                 if not feat_ids:
                     stats["not_found"] += 1
                     self.log(

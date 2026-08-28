@@ -48,6 +48,7 @@ ACTION_LABELS = {
     "skip": "跳过",
     "fill_from_lrvs": "五级补全",
     "sync_from_road": "从ROAD同步",
+    "remove_mark_global": "全局删除边线",
 }
 
 ACTION_COLORS = {

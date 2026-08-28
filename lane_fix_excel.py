@@ -91,6 +91,35 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
 
     compact = re.sub(r"\s+", " ", raw)
 
+    # LANE_MARKING marktype=11 不在 ROAD_LINK 最外侧边界：
+    # 该错误没有唯一的 LANE/ROAD_ID，只需在整个 LANE 的 RBDY_L/R 中移除该边线 ID。
+    marktype11 = (
+        re.search(r"LANEMARKID\s*[\[\]（）()=:：]*\s*(\d{6,})", compact, re.IGNORECASE)
+        if re.search(r"LANE[_ ]?MARKING", compact, re.IGNORECASE) else None
+    )
+    outer_boundary_type = re.search(
+        r"最外侧边界.*?边线类型\s*(?:为|是|=|:)\s*[19](?:\s*或\s*[19])?",
+        compact,
+        re.IGNORECASE,
+    )
+    if marktype11 and (
+        (
+            re.search(r"marktype\s*[\[\]（）()=:：]*\s*(?:是\s*)?11", compact, re.IGNORECASE)
+            and re.search(r"最外侧边界|外侧边界", compact)
+        )
+        or outer_boundary_type
+    ):
+        mark_id = marktype11.group(1)
+        note = (
+            f"最外侧边界上的边线类型为1或9：从 LANE 的 RBDY_L/R 移除 {mark_id}"
+            if outer_boundary_type
+            else f"marktype=11 不在 ROAD_LINK 最外侧边界：从 LANE 的 RBDY_L/R 移除 {mark_id}"
+        )
+        return [LaneFixAction(
+            "remove_mark_global", "RBDY_L/R", "", "", [mark_id], raw,
+            note=note,
+        )]
+
     # ==================== 新增：三种自动修复规则 ====================
     
     # 【新增#1】路沿石冲突（2m内存在类型0/7/8/11路沿石）

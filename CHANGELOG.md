@@ -1,5 +1,11 @@
 # 更新日志
 
+## v1.0.4.71
+- 新增 LANE_MARKING 最外侧边界错误修复：从 LANE 的 RBDY_L/R 中精准移除指定 LANEMARKID。
+- 增强 Excel 边线顺序修复：支持 BDY_LEFT/BDY_RIGHT 中两个边线 ID 交换且保留其他 ID 顺序。
+- 全部规则质检支持双击修复、Shift/Ctrl 多选后一键修复，以及错误详情文本选择复制。
+- 增加质检修复诊断日志，修正全局移除动作的更新数量统计。
+
 ## v1.0.4.57
 - 新增「LANE 吸附 STOPLINE」工具：将选中 LANE 中距离 STOPLINE 最近的一个端点吸附到最近 STOPLINE；端点已越过该 STOPLINE 时，在交点截断并删除越界段。
 - STOPLINE 和 MAP_TILE 吸附范围默认 10 米，双击对应工具栏按钮可分别修改并保存配置；超出范围时提示附近没有可吸附目标。
