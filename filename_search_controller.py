@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 文件名搜索工具
-功能：选中 .shp 图层中的要素，自动搜索并在资源管理器中显示这些文件
+功能：选中 .shp 图层中的要素，在 Windows 资源管理器中自动搜索这些 file_name 字段值对应的文件
 """
 from qgis.PyQt.QtWidgets import QMessageBox
 from qgis.PyQt.QtGui import QIcon
@@ -43,24 +43,28 @@ class FileNameSearchController:
             return match.group(0)
         return filename
 
-    def _search_files_in_folder(self, folder, patterns):
-        """在文件夹中搜索包含指定模式的文件"""
-        found_files = []
-        
-        for root, dirs, files in os.walk(folder):
-            for file in files:
-                file_lower = file.lower()
-                for pattern in patterns:
-                    if pattern.lower() in file_lower:
-                        full_path = os.path.join(root, file)
-                        if full_path not in found_files:
-                            found_files.append(full_path)
-                        break
-        
-        return found_files
+    def _open_explorer_search(self, folder, search_query):
+        """在资源管理器中打开搜索窗口"""
+        try:
+            if os.name != 'nt':
+                return False
+            
+            # 规范化路径（Windows 格式）
+            normalized_path = os.path.normpath(folder)
+            
+            # 构建 search-ms URL
+            # 格式: search-ms:query=<搜索>&crumb=location:<路径>
+            search_url = f'search-ms:query={search_query}&crumb=location:{normalized_path}'
+            
+            # 使用 os.startfile 打开（与 js2jd_convert_controller 相同方法）
+            os.startfile(search_url)
+            return True
+            
+        except Exception as e:
+            return False
 
     def search_files(self):
-        """获取选中要素的 file_name 字段值，自动搜索文件"""
+        """获取选中要素的 file_name 字段值，在资源管理器中自动搜索"""
         layer = self.iface.activeLayer()
         if layer is None:
             QMessageBox.critical(None, "错误", "请先选择一个图层")
@@ -94,63 +98,33 @@ class FileNameSearchController:
             QMessageBox.critical(None, "错误", f"无法找到文件夹：{folder}")
             return
 
-        self.iface.messageBar().pushMessage(
-            "文件名搜索",
-            f"正在搜索 {len(file_names)} 个文件...",
-            Qgis.Info,
-            duration=3
-        )
-
         search_patterns = []
         for name in file_names:
             key = self._extract_key_pattern(name)
             search_patterns.append(key)
 
-        found_files = self._search_files_in_folder(folder, search_patterns)
-
-        if found_files:
-            try:
-                subprocess.Popen(['explorer.exe', '/select,', found_files[0]])
-                
-                if len(found_files) == 1:
-                    self.iface.messageBar().pushMessage(
-                        "文件名搜索",
-                        f"找到 1 个文件并已在资源管理器中选中",
-                        Qgis.Success,
-                        duration=5
-                    )
-                else:
-                    msg = f"找到 {len(found_files)} 个文件\n\n"
-                    msg += "已在资源管理器中打开第一个文件位置：\n\n"
-                    for i, f in enumerate(found_files[:15], 1):
-                        msg += f"{i}. {os.path.basename(f)}\n"
-                    if len(found_files) > 15:
-                        msg += f"\n... 还有 {len(found_files) - 15} 个文件"
-                    
-                    QMessageBox.information(None, "搜索结果", msg)
-                    
-                    self.iface.messageBar().pushMessage(
-                        "文件名搜索",
-                        f"找到 {len(found_files)} 个文件",
-                        Qgis.Success,
-                        duration=5
-                    )
-            except Exception as e:
-                QMessageBox.critical(None, "错误", f"无法打开资源管理器：{str(e)}")
+        if len(search_patterns) == 1:
+            search_query = search_patterns[0]
         else:
-            msg = f"在文件夹中未找到匹配的文件\n\n"
-            msg += f"搜索位置: {folder}\n\n"
-            msg += "搜索的模式:\n"
-            for pattern in search_patterns[:10]:
-                msg += f"- {pattern}\n"
-            if len(search_patterns) > 10:
-                msg += f"... 还有 {len(search_patterns) - 10} 个"
-            
-            QMessageBox.warning(None, "未找到文件", msg)
-            
+            search_query = " OR ".join(search_patterns)
+
+        success = self._open_explorer_search(folder, search_query)
+
+        if success:
             self.iface.messageBar().pushMessage(
                 "文件名搜索",
-                "未找到匹配的文件",
-                Qgis.Warning,
+                f"已在资源管理器中搜索 {len(file_names)} 个文件",
+                Qgis.Success,
                 duration=5
             )
+        else:
+            try:
+                subprocess.Popen(['explorer.exe', folder])
+                self.iface.messageBar().pushMessage(
+                    "文件名搜索",
+                    f"已打开文件夹，请手动搜索：{search_query}",
+                    Qgis.Warning,
+                    duration=8
+                )
+            except Exception as e:
+                QMessageBox.critical(None, "错误", f"无法打开资源管理器：{str(e)}")
