@@ -52,9 +52,9 @@ class FileNameSearchController:
             # 规范化路径（Windows 格式）
             normalized_path = os.path.normpath(folder)
             
-            # 构建 search-ms URL - 使用 displayname 参数确保搜索生效
-            # 格式: search-ms:displayname=<显示名>&crumb=location:<路径>
-            search_url = f'search-ms:displayname={search_query}&crumb=location:{normalized_path}'
+            # 构建 search-ms URL，与 js2jd 转换控制器使用相同的搜索方式
+            # 格式: search-ms:query=<搜索条件>&crumb=location:<路径>
+            search_url = f'search-ms:query={search_query}&crumb=location:{normalized_path}'
             
             # 使用 os.startfile 打开（与 js2jd_convert_controller 相同方法）
             os.startfile(search_url)
