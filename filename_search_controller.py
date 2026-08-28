@@ -37,8 +37,8 @@ class FileNameSearchController:
         return os.path.normpath(os.path.dirname(shp_path))
 
     def _extract_key_pattern(self, filename):
-        """提取文件名中的关键数字模式，如 -164_-212"""
-        match = re.search(r'[-_]?\d+[_]\d+', filename)
+        """提取文件名中的关键数字模式，如 -168_-211"""
+        match = re.search(r'-?\d+_-?\d+', filename)
         if match:
             return match.group(0)
         return filename
