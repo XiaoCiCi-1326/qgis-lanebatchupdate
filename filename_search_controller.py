@@ -8,6 +8,7 @@ from qgis.PyQt.QtGui import QIcon
 from qgis.core import Qgis
 import os
 import subprocess
+import re
 
 
 class FileNameSearchController:
@@ -35,29 +36,31 @@ class FileNameSearchController:
             shp_path = layer_source
         return os.path.normpath(os.path.dirname(shp_path))
 
-    def _normalize_filename(self, filename):
-        """标准化文件名：去除常见后缀 _r, _g, _b 等"""
-        base = filename
-        for suffix in ['_r', '_g', '_b', '_rg', '_rb', '_gb', '_rgb']:
-            if base.lower().endswith(suffix):
-                base = base[:-len(suffix)]
-                break
-        return base
+    def _extract_key_pattern(self, filename):
+        """提取文件名中的关键数字模式，如 -164_-212"""
+        match = re.search(r'[-_\d]+', filename)
+        if match:
+            return match.group(0)
+        return filename
 
     def _search_files_in_folder(self, folder, file_names):
-        """在文件夹中搜索文件"""
+        """在文件夹中模糊搜索文件"""
         found_files = []
-        normalized_search = {self._normalize_filename(name).lower(): name for name in file_names}
+        
+        search_patterns = []
+        for name in file_names:
+            key = self._extract_key_pattern(name)
+            search_patterns.append(key.lower())
         
         for root, dirs, files in os.walk(folder):
             for file in files:
-                file_base = os.path.splitext(file)[0]
-                file_normalized = self._normalize_filename(file_base).lower()
-                
-                if file_normalized in normalized_search:
-                    found_files.append(os.path.join(root, file))
-                elif file_base.lower() in [name.lower() for name in file_names]:
-                    found_files.append(os.path.join(root, file))
+                file_lower = file.lower()
+                for pattern in search_patterns:
+                    if pattern in file_lower:
+                        full_path = os.path.join(root, file)
+                        if full_path not in found_files:
+                            found_files.append(full_path)
+                        break
         
         return found_files
 
@@ -98,7 +101,7 @@ class FileNameSearchController:
 
         self.iface.messageBar().pushMessage(
             "文件名搜索",
-            f"正在搜索 {len(file_names)} 个文件...",
+            f"正在模糊搜索 {len(file_names)} 个文件...",
             Qgis.Info,
             duration=3
         )
