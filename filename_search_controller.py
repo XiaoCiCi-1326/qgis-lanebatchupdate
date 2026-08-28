@@ -44,12 +44,35 @@ class FileNameSearchController:
         return filename
 
     def _open_explorer_search(self, folder, search_query):
-        """在资源管理器中打开搜索"""
-        folder_url = folder.replace('\\', '/')
-        
-        cmd = f'explorer.exe "search-ms:query={search_query}&crumb=location:{folder_url}"'
+        """在资源管理器中打开搜索窗口"""
         try:
-            subprocess.Popen(cmd, shell=False)
+            ps_script = f'''
+param([string]$searchQuery, [string]$folderPath)
+
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+$folderPath = $folderPath -replace '/', '\\\\'
+
+$search = "search-ms:query=$searchQuery&crumb=location:$folderPath&"
+
+Start-Process -FilePath explorer.exe -ArgumentList "`"$search`""
+'''
+            import tempfile
+            temp_ps = tempfile.NamedTemporaryFile(mode='w', suffix='.ps1', delete=False, encoding='utf-8')
+            temp_ps.write(ps_script)
+            temp_ps.close()
+
+            subprocess.Popen(
+                ['powershell.exe', '-ExecutionPolicy', 'Bypass', '-File', temp_ps.name,
+                 '-searchQuery', search_query, '-folderPath', folder],
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+
+            try:
+                os.unlink(temp_ps.name)
+            except:
+                pass
             return True
         except Exception as e:
             return False
