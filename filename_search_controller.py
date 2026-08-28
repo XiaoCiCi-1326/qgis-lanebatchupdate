@@ -8,7 +8,6 @@ from qgis.PyQt.QtGui import QIcon
 from qgis.core import Qgis
 import os
 import subprocess
-import glob
 
 
 class FileNameSearchController:
@@ -36,15 +35,29 @@ class FileNameSearchController:
             shp_path = layer_source
         return os.path.normpath(os.path.dirname(shp_path))
 
+    def _normalize_filename(self, filename):
+        """标准化文件名：去除常见后缀 _r, _g, _b 等"""
+        base = filename
+        for suffix in ['_r', '_g', '_b', '_rg', '_rb', '_gb', '_rgb']:
+            if base.lower().endswith(suffix):
+                base = base[:-len(suffix)]
+                break
+        return base
+
     def _search_files_in_folder(self, folder, file_names):
         """在文件夹中搜索文件"""
         found_files = []
+        normalized_search = {self._normalize_filename(name).lower(): name for name in file_names}
         
         for root, dirs, files in os.walk(folder):
-            for file_name in file_names:
-                for file in files:
-                    if file_name.lower() in file.lower():
-                        found_files.append(os.path.join(root, file))
+            for file in files:
+                file_base = os.path.splitext(file)[0]
+                file_normalized = self._normalize_filename(file_base).lower()
+                
+                if file_normalized in normalized_search:
+                    found_files.append(os.path.join(root, file))
+                elif file_base.lower() in [name.lower() for name in file_names]:
+                    found_files.append(os.path.join(root, file))
         
         return found_files
 
