@@ -26,7 +26,7 @@ from xml.sax.saxutils import escape as xml_escape
 
 from qgis.PyQt.QtCore import QTimer, Qt, QSettings
 from qgis.PyQt.QtGui import QIcon
-from qgis.PyQt.QtWidgets import QAction, QFileDialog, QMessageBox, QApplication, QDialog, QPushButton, QToolButton
+from qgis.PyQt.QtWidgets import QAction, QFileDialog, QMessageBox, QApplication, QDialog, QPushButton, QToolButton, QMenu
 from qgis.core import QgsProject, QgsVectorLayer
 
 
@@ -64,7 +64,7 @@ class ShpCheckerController:
         except OSError:
             pass
 
-    def initGui(self, actions_master):
+    def initGui(self, actions_master, related_action=None):
         icon_path = os.path.join(self.plugin_dir, "icon_316_wrench.svg")
         self.action = QAction(QIcon(icon_path), "3.16扳手错质检", self.iface.mainWindow())
         self.action.setToolTip("加载转换后的19个数据文件，调用 shpchecker 自动质检并导出 Excel")
@@ -77,16 +77,22 @@ class ShpCheckerController:
                 event.accept()
         self.toolbar_button = _InputButton(self.iface.mainWindow())
         self.toolbar_button.setDefaultAction(self.action)
-        self.toolbar_button.setToolTip("单击运行 3.16 扳手错；双击配置转换数据目录")
+        self.toolbar_button.setToolTip("单击运行 3.16 扳手错；右侧箭头运行自动3.16质检错；双击配置转换数据目录")
+        if related_action is not None:
+            menu = QMenu(self.toolbar_button)
+            menu.addAction(related_action)
+            self.toolbar_button.setMenu(menu)
+            self.toolbar_button.setPopupMode(QToolButton.MenuButtonPopup)
         toolbar = self.iface.vectorToolBar()
         if toolbar is not None:
             toolbar.addWidget(self.toolbar_button)
 
     def unload(self):
+        self._stop_process()
         if self.action is not None:
             try:
                 self.iface.removeVectorToolBarIcon(self.action)
-                self.iface.removePluginToVectorMenu("车道处理工具", self.action)
+                self.iface.removePluginMenu("车道处理工具", self.action)
             except (AttributeError, RuntimeError):
                 pass
         if self.toolbar_button is not None:
@@ -117,6 +123,22 @@ class ShpCheckerController:
             with open(self._log_path, "w", encoding="utf-8-sig") as handle:
                 handle.write("\n".join(self._all_log_lines) + "\n")
         except OSError:
+            pass
+
+    def _stop_process(self):
+        process = self._process
+        self._process = None
+        if process is None:
+            return
+        try:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
+        except (OSError, subprocess.SubprocessError):
             pass
 
     def _find_qgis_316(self):

@@ -40,7 +40,7 @@ class InertialFollowController(QObject):
         self.iface.mainWindow().removeEventFilter(self)
         if self.action is not None:
             self.iface.removeVectorToolBarIcon(self.action)
-            self.iface.removePluginFromVectorMenu("车道处理工具", self.action)
+            self.iface.removePluginMenu("车道处理工具", self.action)
         self.action = None
         self.layer = None
         self.feature_ids = []
