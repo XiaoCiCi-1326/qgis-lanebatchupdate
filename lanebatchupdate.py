@@ -163,6 +163,10 @@ class LaneBatchUpdateTool:
     def _apply_flat_mode(self):
         """应用平铺模式 - 所有按钮都显示在工具栏"""
         for action in self.actions:
+            # shpchecker owns a custom QToolButton: its QAction is kept in the
+            # menu but must not be added again as a second toolbar button.
+            if action is self.shpchecker.action:
+                continue
             if action is self.filename_search.search_action:
                 self.filename_search.add_toolbar_button()
             else:

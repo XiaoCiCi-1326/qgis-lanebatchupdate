@@ -223,11 +223,6 @@ class ErrorResultsController:
     def show(self, title="全部规则"):
         if self.dialog is None:
             self.dialog = ErrorResultsDialog(self, self.iface.mainWindow())
-        try:
-            folder = QSettings().value("LaneBatchUpdate/qualityErrorDir", r"D:\check_error")
-            self.load_latest_quality_errors(str(folder))
-        except (FileNotFoundError, RuntimeError, sqlite3.Error):
-            pass
         self.dialog.setWindowTitle(title)
         self.dialog.show_rules()
         self.dialog.show()
@@ -376,6 +371,7 @@ class ErrorResultsController:
             "LANE_MARKING": "BOUNDARY",
             "LANE": "LANE",
             "TRAFFICLIGHT": "SIGNAL",
+            "ROAD_LINK": "ROAD",
         }
         source_layer = str(data.get("LAYER") or "").strip().upper()
         primary_layer = layer_names.get(source_layer, source_layer)
@@ -415,6 +411,20 @@ class ErrorResultsController:
         add_selection(data.get("REF_LAYER_1"), data.get("RL_1_FIELD_1_IS"))
         add_selection(data.get("REF_LAYER_2"), data.get("RL_1_FIELD_2_IS"))
         detail = str(data.get("DETAIL") or "").strip()
+        # Excel/errorlog rows often contain several cross-layer references only
+        # in the free-text description, e.g. intersection=..., signal=...,
+        # lane: .... Parse each reference so one click selects every element.
+        text = " ".join(str(data.get(key) or "") for key in ("DETAIL", "MESSAGE", "ERROR", "FEATUREID"))
+        reference_patterns = (
+            ("INTERSECTION", r"\bintersection\s*[=:：]\s*(\d+)"),
+            ("SIGNAL", r"\bsignal\s*[=:：]\s*(\d+)"),
+            ("LANE", r"\blane\s*[=:：]\s*(\d+)"),
+            ("ROAD", r"\broad[_ ]?link\s*[=:：]\s*(\d+)"),
+        )
+        for target_name, pattern in reference_patterns:
+            ids = re.findall(pattern, text, re.IGNORECASE)
+            if ids:
+                add_selection(target_name, "|".join(ids))
         rule = str(data.get("RULENO") or "").strip()
         level = str(data.get("ERRORLEVEL") or "").strip()
         return {
@@ -431,15 +441,23 @@ class ErrorResultsController:
         if not name:
             return None
         project = QgsProject.instance()
-        layers = project.mapLayersByName(name)
-        if layers:
-            return next((layer for layer in layers if isinstance(layer, QgsVectorLayer)), None)
-        target = "%s.shp" % name.lower()
+        raw_name = str(name).strip().upper()
+        aliases = {
+            "ROAD_LINK": ("ROAD", "ROAD_LINK"),
+            "ROAD": ("ROAD", "ROAD_LINK"),
+            "TRAFFICLIGHT": ("SIGNAL", "TRAFFICLIGHT"),
+            "SIGNAL": ("SIGNAL", "TRAFFICLIGHT"),
+        }.get(raw_name, (raw_name,))
+        for alias in aliases:
+            layers = project.mapLayersByName(alias)
+            if layers:
+                return next((layer for layer in layers if isinstance(layer, QgsVectorLayer)), None)
+        targets = {"%s.shp" % alias.lower() for alias in aliases}
         for layer in project.mapLayers().values():
             if not isinstance(layer, QgsVectorLayer):
                 continue
             source = layer.source().split("|", 1)[0]
-            if os.path.basename(source).lower() == target:
+            if os.path.basename(source).lower() in targets:
                 return layer
         return None
 

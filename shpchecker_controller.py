@@ -355,11 +355,16 @@ class ShpCheckerController:
         if not exported:
             lines.append("未找到可调用的 shpchecker 导出方法，将使用 ERROR_LOG 生成 Excel")
         self._write_log(lines)
-        # 检查可能需要较长时间；等待 errorlog.xlsx/ERROR_LOG 生成，最多约 60 秒。
+        # 检查可能需要较长时间；等待本次运行生成的 errorlog.xlsx，最多约 60 秒。
         has_result_file = False
         for root, _dirs, names in os.walk(self._input_dir):
-            if any(name.lower().startswith("errorlog") and name.lower().endswith((".xlsx", ".sqlite")) for name in names):
-                has_result_file = True
+            for name in names:
+                path = os.path.join(root, name)
+                if (name.lower().startswith("errorlog") and name.lower().endswith(".xlsx")
+                        and os.path.getmtime(path) >= self._run_started_at):
+                    has_result_file = True
+                    break
+            if has_result_file:
                 break
         if not has_result_file and self._collect_attempts < 30:
             QTimer.singleShot(2000, self._export_and_collect)
@@ -382,16 +387,16 @@ class ShpCheckerController:
                             pass
             if not fresh:
                 raise FileNotFoundError("本次运行未生成新的 errorlog.xlsx")
-            path, records = self.error_results.load_latest_shpchecker_errors(self._input_dir)
-            lines.append("读取 3.16 扳手错 errorlog.xlsx: %s (%d 条)" % (path, len(records)))
-            export_path = self._export_records_xlsx(records, self._input_dir)
-            lines.append("Excel: %s" % export_path)
-            self.error_results.show("全部规则")
-            QMessageBox.information(self.iface.mainWindow(), "3.16扳手错质检完成", "发现 %d 条错误。\nExcel：%s\n日志：%s" % (len(records), export_path, self._log_path or ""))
+            path = max(fresh, key=os.path.getmtime)
+            lines.append("3.16 扳手错已生成 errorlog.xlsx: %s" % path)
+            QMessageBox.information(
+                self.iface.mainWindow(), "3.16扳手错质检完成",
+                "errorlog.xlsx 已生成。\n文件夹：%s\n日志：%s" % (os.path.dirname(path), self._log_path or ""),
+            )
         except Exception as exc:
             lines.append("收集结果失败: %r" % (exc,))
             lines.append(traceback.format_exc())
-            QMessageBox.warning(self.iface.mainWindow(), "3.16扳手错质检", "检查已执行，但未能自动读取结果。\n请查看 shpchecker 界面和日志。")
+            QMessageBox.warning(self.iface.mainWindow(), "3.16扳手错质检", "检查已执行，但未找到本次生成的 errorlog.xlsx。\n请查看 shpchecker 界面和日志。")
         self._write_log(lines)
 
     @staticmethod
