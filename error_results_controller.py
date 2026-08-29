@@ -5,6 +5,8 @@ from qgis.PyQt.QtGui import QColor, QKeySequence
 import os
 import re
 import sqlite3
+import zipfile
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from qgis.PyQt.QtWidgets import (
     QApplication,
@@ -222,7 +224,8 @@ class ErrorResultsController:
         if self.dialog is None:
             self.dialog = ErrorResultsDialog(self, self.iface.mainWindow())
         try:
-            self.load_latest_quality_errors()
+            folder = QSettings().value("LaneBatchUpdate/qualityErrorDir", r"D:\check_error")
+            self.load_latest_quality_errors(str(folder))
         except (FileNotFoundError, RuntimeError, sqlite3.Error):
             pass
         self.dialog.setWindowTitle(title)
@@ -235,12 +238,19 @@ class ErrorResultsController:
         """读取最新的 QGIS 3.16/JD 质检库并转换为错误记录。"""
         candidates = []
         if os.path.isdir(folder):
-            for name in os.listdir(folder):
-                path = os.path.join(folder, name)
-                if name.lower().startswith("temp.sqlite") and os.path.isfile(path):
-                    candidates.append(path)
+            # shpchecker 通常把 errorlog 放在输入目录的子目录中；递归查找
+            # temp.sqlite*，同时兼容旧版 D:\check_error 直存格式。
+            for root, _dirs, names in os.walk(folder):
+                for name in names:
+                    path = os.path.join(root, name)
+                    if name.lower().startswith("temp.sqlite") and os.path.isfile(path):
+                        candidates.append(path)
         if not candidates:
-            raise FileNotFoundError("未找到 D:\\check_error\\temp.sqlite* 质检文件")
+            # 允许调用方通过 QGIS 设置指定 shpchecker 输出目录。
+            settings_folder = QSettings().value("LaneBatchUpdate/qualityErrorDir", "")
+            if settings_folder and os.path.isdir(str(settings_folder)) and os.path.abspath(str(settings_folder)) != os.path.abspath(folder):
+                return self.load_latest_quality_errors(str(settings_folder))
+            raise FileNotFoundError("未找到质检输出目录中的 temp.sqlite* 文件")
 
         database_path = max(candidates, key=os.path.getmtime)
         records = []
@@ -263,6 +273,102 @@ class ErrorResultsController:
         if self.dialog is not None:
             self.dialog.refresh(self.records)
         return database_path, records
+
+    def load_latest_shpchecker_errors(self, folder=None):
+        """读取 3.16 扳手错导出的 errorlog.xlsx，不混入普通质检库。"""
+        folder = str(folder or QSettings().value(
+            "LaneBatchUpdate/shpcheckerOutputDir", r"D:\check_error"
+        ) or r"D:\check_error")
+        candidates = []
+        if os.path.isdir(folder):
+            for root, _dirs, names in os.walk(folder):
+                for name in names:
+                    if name.lower().startswith("errorlog") and name.lower().endswith(".xlsx"):
+                        candidates.append(os.path.join(root, name))
+        if not candidates:
+            raise FileNotFoundError("未找到 3.16 扳手错导出的 errorlog.xlsx")
+        path = max(candidates, key=os.path.getmtime)
+        records = self._load_errorlog_xlsx(path)
+        for record in records:
+            record["wrench_source"] = True
+            record["type"] = "3.16扳手错" if not record.get("type") else record["type"].replace("3.16质检", "3.16扳手错")
+        self.records = [record for record in self.records if not record.get("wrench_source")]
+        self.records.extend(records)
+        if self.dialog is not None:
+            self.dialog.refresh(self.records)
+        QSettings().setValue("LaneBatchUpdate/shpcheckerOutputDir", folder)
+        return path, records
+
+    @staticmethod
+    def _load_errorlog_xlsx(path):
+        """读取 shpchecker 生成的 errorlog.xlsx（兼容其内置最小 XLSX 写入器）。"""
+        ns = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+        with zipfile.ZipFile(path, "r") as archive:
+            shared = []
+            if "xl/sharedStrings.xml" in archive.namelist():
+                root = ET.fromstring(archive.read("xl/sharedStrings.xml"))
+                for item in root.findall("m:si", ns):
+                    shared.append("".join(node.text or "" for node in item.iter() if node.tag.endswith("t")))
+            sheet_name = next((n for n in archive.namelist() if n.startswith("xl/worksheets/") and n.endswith(".xml")), None)
+            if not sheet_name:
+                return []
+            root = ET.fromstring(archive.read(sheet_name))
+            rows = []
+            for row in root.findall(".//m:row", ns):
+                values = []
+                for cell in row.findall("m:c", ns):
+                    value = ""
+                    node = cell.find("m:is/m:t", ns)
+                    if node is not None:
+                        value = node.text or ""
+                    else:
+                        node = cell.find("m:v", ns)
+                        value = node.text or "" if node is not None else ""
+                        if cell.get("t") == "s" and value.isdigit() and int(value) < len(shared):
+                            value = shared[int(value)]
+                    values.append(value)
+                if any(str(v).strip() for v in values):
+                    rows.append(values)
+        if not rows:
+            return []
+        headers = [str(v).strip().upper() for v in rows[0]]
+        def get(row, names):
+            for name in names:
+                if name in headers:
+                    idx = headers.index(name)
+                    return row[idx] if idx < len(row) else ""
+            return ""
+        records = []
+        for row in rows[1:]:
+            detail = str(get(row, ("DETAIL", "ERROR", "ERRORINFO", "MESSAGE", "问题", "错误记录", "错误信息", "ISSUE")) or "").strip()
+            check = str(get(row, ("RULENO", "RULE", "CHECK", "检查项", "规则")) or "").strip()
+            # shpchecker 内置 XLSX 导出列固定为：检查组、检查项、错误记录、状态、X、Y；
+            # 由于旧版文件没有英文表头，按位置回退读取第三列错误记录。
+            if len(row) >= 3 and (not detail or detail == check):
+                detail = str(row[2] or "").strip()
+            if len(row) >= 2 and not check:
+                check = str(row[1] or "").strip()
+            if not detail and not check:
+                continue
+            layer = str(get(row, ("LAYER", "图层", "错误图层")) or "").strip()
+            feature_id = str(get(row, ("FEATUREID", "FEATURE_ID", "要素ID", "要素")) or "").strip()
+            if not layer:
+                layer_match = re.search(r"\b(LANE(?:_MARKING|_GROUP|_NODE)?|ROAD_LINK|INTERSECTION|TRAFFICLIGHT|SIGNAL)\b", detail, re.I)
+                layer = layer_match.group(1).upper() if layer_match else ""
+            if not feature_id:
+                id_match = re.search(r"(?:LANEID|LINKID|FEATUREID|ID)\s*[=:：]?\s*(\d{6,})", detail, re.I)
+                if not id_match:
+                    id_match = re.search(r"\b(\d{6,})\b", detail)
+                feature_id = id_match.group(1) if id_match else ""
+            source = {
+                "LAYER": layer,
+                "FEATUREID": feature_id,
+                "DETAIL": detail or check,
+                "RULENO": check,
+                "ERRORLEVEL": str(get(row, ("ERRORLEVEL", "LEVEL", "状态")) or "").strip(),
+            }
+            records.append(ErrorResultsController._quality_error_record(source))
+        return records
 
     @staticmethod
     def _quality_error_record(data):
@@ -553,6 +659,10 @@ class ErrorResultsDialog(QDialog):
         self.run_quality_button = QPushButton("读取最新 3.16 质检错误", page)
         self.run_quality_button.clicked.connect(self._load_quality_errors)
         buttons.addWidget(self.run_quality_button)
+        self.run_wrench_button = QPushButton("读取 3.16 扳手错", page)
+        self.run_wrench_button.setToolTip("读取 shpchecker 导出的 errorlog.xlsx；与 3.16 质检错误分开")
+        self.run_wrench_button.clicked.connect(self._load_shpchecker_errors)
+        buttons.addWidget(self.run_wrench_button)
         self.run_rules_button = QPushButton("执行选中规则", page)
         self.run_rules_button.clicked.connect(self._run_selected_rules)
         buttons.addWidget(self.run_rules_button)
@@ -695,6 +805,20 @@ class ErrorResultsDialog(QDialog):
         self.tabs.setCurrentWidget(self.results_page)
         self.summary.setText(
             "已读取最新质检库：%s，共 %d 条错误记录。点击一行可选中涉及要素。"
+            % (os.path.basename(path), len(records))
+        )
+
+    def _load_shpchecker_errors(self):
+        folder = QSettings().value("LaneBatchUpdate/shpcheckerOutputDir", r"D:\check_error")
+        try:
+            path, records = self.controller.load_latest_shpchecker_errors(str(folder))
+        except (FileNotFoundError, RuntimeError, ValueError) as exc:
+            QMessageBox.critical(self, "读取 3.16 扳手错失败", str(exc))
+            return
+        self.refresh(self.controller.records)
+        self.tabs.setCurrentWidget(self.results_page)
+        self.summary.setText(
+            "已读取 3.16 扳手错：%s，共 %d 条错误记录。"
             % (os.path.basename(path), len(records))
         )
 

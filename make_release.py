@@ -24,6 +24,8 @@ RELEASE_FILES = (
     "error_results_controller.py",
     "js2jd_convert_controller.py",
     "filename_search_controller.py",
+    "shpchecker_controller.py",
+    "shpchecker_runner.py",
     "metadata.txt",
     "icon.png",
     "icon_speed.png",
@@ -53,6 +55,7 @@ RELEASE_FILES = (
     "icon_js2jd_convert.svg",
     "icon_filename_search.svg",
     "icon_filename_copy.svg",
+    "icon_316_wrench.svg",
     "lane_fix_excel.py",
     "lane_fix_engine.py",
     "lane_fix_controller.py",
@@ -202,6 +205,16 @@ def main():
             ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc", ".gitignore")
         )
         print(f"  已复制 js2data 到发布包")
+
+    vendor_src = PLUGIN_DIR / "vendor" / "shpchecker"
+    vendor_dst = plugin_out / "vendor" / "shpchecker"
+    if vendor_src.exists():
+        shutil.copytree(
+            vendor_src,
+            vendor_dst,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+        )
+        print("  已复制 vendor/shpchecker（QGIS 3.16 编译扩展）")
 
     print(f"\n[4/4] 创建 ZIP 包...")
 

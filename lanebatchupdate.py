@@ -35,6 +35,7 @@ from .raster_pyramid_controller import RasterPyramidController
 from .raster_compress_controller import RasterCompressController
 from .js2jd_convert_controller import Js2jdConvertController
 from .filename_search_controller import FileNameSearchController
+from .shpchecker_controller import ShpCheckerController
 
 
 class LaneBatchUpdateTool:
@@ -75,6 +76,7 @@ class LaneBatchUpdateTool:
         self.raster_compress = RasterCompressController(iface, self.plugin_dir)
         self.js2jd_convert = Js2jdConvertController(iface, self.plugin_dir, self.log)
         self.filename_search = FileNameSearchController(iface, self.plugin_dir)
+        self.shpchecker = ShpCheckerController(iface, self.plugin_dir, self.error_results, self.log)
         self.error_results.configure_checkers(
             self.run_check_right_straight_overlap,
             self.boundary_length.apply_filter,
@@ -138,6 +140,7 @@ class LaneBatchUpdateTool:
         self.raster_compress.initGui(self.actions)
         self.js2jd_convert.initGui(self.actions)
         self.filename_search.initGui(self.actions)
+        self.shpchecker.initGui(self.actions)
 
         # 根据保存的模式初始化工具栏布局
         print(f"[LaneBatchUpdate] 当前工具栏模式: {self.toolbar_mode}")
@@ -237,6 +240,7 @@ class LaneBatchUpdateTool:
                 ("filename_search", "搜索文件名", "icon_filename_search.svg"),
                 ("filename_copy_results", "复制搜索结果", "icon_filename_copy.svg"),
                 (self.MODE_REMOVE_ALL, "移除所有图层", "icon_remove_layers.svg"),
+                ("shpchecker_316", "3.16扳手错质检", "icon_316_wrench.svg"),
             ],
         }
 
@@ -298,6 +302,8 @@ class LaneBatchUpdateTool:
             self.filename_search.search_files()
         elif item_id == "filename_copy_results":
             self.filename_search.copy_search_results()
+        elif item_id == "shpchecker_316":
+            self.shpchecker.run()
 
     def unload(self):
         self.clear_overlap_highlights()
@@ -350,6 +356,7 @@ class LaneBatchUpdateTool:
         self.raster_pyramid.unload()
         self.raster_compress.unload()
         self.js2jd_convert.unload()
+        self.shpchecker.unload()
 
     def clear_overlap_highlights(self):
         for highlight in self.overlap_highlights:

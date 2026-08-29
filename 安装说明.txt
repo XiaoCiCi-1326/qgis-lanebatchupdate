@@ -4,6 +4,7 @@ Lane 批量刷值工具 — 安装说明
 
 【环境】
 - QGIS 3.x（建议 3.28+，已在 3.32 测试）
+- 3.16 扳手错质检：在 QGIS 3.28 中后台调用独立 QGIS 3.16，使用该功能的电脑需安装 QGIS 3.16 64 位；插件包已内置 shpchecker 扩展。默认目录为插件目录下“转换数据\output”，工具栏图标单击执行、双击配置目录；3.28 不加载 19 个数据图层，结果自动保存为 output\errorlog.xlsx。
 - 刷值功能：加载 LANE、LANE_NODE（转向刷值建议加 INTERSECTION）
 - 一键重构：另需安装 Z Attribute、Z Tools，工具栏步骤 6~9 按钮可见
 
