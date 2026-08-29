@@ -244,7 +244,6 @@ class LaneBatchUpdateTool:
                 ("filename_search", "搜索文件名", "icon_filename_search.svg"),
                 ("filename_copy_results", "复制搜索结果", "icon_filename_copy.svg"),
                 (self.MODE_REMOVE_ALL, "移除所有图层", "icon_remove_layers.svg"),
-                ("shpchecker_316", "3.16扳手错质检", "icon_316_wrench.svg"),
             ],
         }
 

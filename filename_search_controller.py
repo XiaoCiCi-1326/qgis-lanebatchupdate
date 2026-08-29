@@ -21,6 +21,7 @@ class FileNameSearchController:
         self.search_action = None
         self.copy_action = None
         self.toolbar_button = None
+        self.toolbar_action = None
 
     def initGui(self, actions):
         search_icon_path = os.path.join(self.plugin_dir, "icon_filename_search.svg")
@@ -45,15 +46,15 @@ class FileNameSearchController:
     def add_toolbar_button(self):
         toolbar = self.iface.vectorToolBar()
         if toolbar is not None and self.toolbar_button is not None:
-            if self.toolbar_button.parent() is not toolbar:
-                self.toolbar_button.setParent(toolbar)
-            if toolbar.widgetForAction(self.toolbar_button.defaultAction()) is None:
-                toolbar.addWidget(self.toolbar_button)
+            if self.toolbar_action is None or toolbar.widgetForAction(self.toolbar_action) is None:
+                self.toolbar_action = toolbar.addWidget(self.toolbar_button)
 
     def remove_toolbar_button(self):
         toolbar = self.iface.vectorToolBar()
         if toolbar is not None and self.toolbar_button is not None:
-            toolbar.removeWidget(self.toolbar_button)
+            if self.toolbar_action is not None:
+                toolbar.removeAction(self.toolbar_action)
+                self.toolbar_action = None
 
     def unload(self):
         self.remove_toolbar_button()
@@ -66,6 +67,7 @@ class FileNameSearchController:
         self.search_action = None
         self.copy_action = None
         self.toolbar_button = None
+        self.toolbar_action = None
 
     def _get_layer_folder(self, layer):
         """获取图层所在的文件夹路径"""
