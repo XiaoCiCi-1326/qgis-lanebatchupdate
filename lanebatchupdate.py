@@ -37,6 +37,7 @@ from .js2jd_convert_controller import Js2jdConvertController
 from .filename_search_controller import FileNameSearchController
 from .shpchecker_controller import ShpCheckerController
 from .jdchecker_controller import JdCheckerController
+from .layer_tools_controller import LayerToolsController
 
 
 class LaneBatchUpdateTool:
@@ -79,6 +80,7 @@ class LaneBatchUpdateTool:
         self.filename_search = FileNameSearchController(iface, self.plugin_dir)
         self.shpchecker = ShpCheckerController(iface, self.plugin_dir, self.error_results, self.log)
         self.jdchecker = JdCheckerController(iface, self.plugin_dir, self.log)
+        self.layer_tools = LayerToolsController(iface, self.plugin_dir)
         self.error_results.configure_checkers(
             self.run_check_right_straight_overlap,
             self.boundary_length.apply_filter,
@@ -144,6 +146,7 @@ class LaneBatchUpdateTool:
         self.filename_search.initGui(self.actions)
         self.jdchecker.initGui(self.actions)
         self.shpchecker.initGui(self.actions, self.jdchecker.action)
+        self.layer_tools.initGui(self.actions)
 
         # 根据保存的模式初始化工具栏布局
         print(f"[LaneBatchUpdate] 当前工具栏模式: {self.toolbar_mode}")
@@ -247,6 +250,9 @@ class LaneBatchUpdateTool:
                 (self.MODE_JS2JD_CONVERT, "Js2jd 转换", "icon_js2jd_convert.svg"),
                 ("filename_search", "搜索文件名", "icon_filename_search.svg"),
                 ("filename_copy_results", "复制搜索结果", "icon_filename_copy.svg"),
+                ("layer_switch", "图层快捷切换", "icon_layer_switch.png"),
+                ("layer_visibility", "图层显隐方案", "icon_layer_visibility.png"),
+                ("side_button_toggle", "侧键切换图层", "icon_side_button_toggle.svg"),
                 (self.MODE_REMOVE_ALL, "移除所有图层", "icon_remove_layers.svg"),
             ],
         }
@@ -309,6 +315,12 @@ class LaneBatchUpdateTool:
             self.filename_search.search_files()
         elif item_id == "filename_copy_results":
             self.filename_search.copy_search_results()
+        elif item_id == "layer_switch":
+            self.layer_tools.open_switch_settings()
+        elif item_id == "layer_visibility":
+            self.layer_tools.open_visibility_settings()
+        elif item_id == "side_button_toggle":
+            self.layer_tools.open_toggle_settings()
         elif item_id == "shpchecker_316":
             self.shpchecker.run()
         elif item_id == "jdchecker_316":
@@ -367,6 +379,7 @@ class LaneBatchUpdateTool:
         self.js2jd_convert.unload()
         self.shpchecker.unload()
         self.jdchecker.unload()
+        self.layer_tools.unload()
 
     def clear_overlap_highlights(self):
         for highlight in self.overlap_highlights:
