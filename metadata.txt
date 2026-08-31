@@ -6,7 +6,7 @@
 name=Lane 批量刷值工具
 qgisMinimumVersion=3.0
 description=限速刷值 / ROAD_TYPE=2 / 转向个数刷值 / 一键重构 / 全量补空RBDY / Excel边线改错 / 自动走3.16质检错 / 文件名搜索与复制
-version=1.0.4.77
+version=1.0.4.78
 author=石天赐
 email=2774480158@qq.com
 

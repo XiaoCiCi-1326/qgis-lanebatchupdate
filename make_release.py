@@ -41,6 +41,7 @@ RELEASE_FILES = (
     "icon_rebuild_all.svg",
     "icon_open_original.svg",
     "icon_fill_rbdy.png",
+    "icon_refresh_project.svg",
     "icon_remove_layers.svg",
     "icon_inertial_follow.svg",
     "icon_map_tile_snap.svg",

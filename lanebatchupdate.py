@@ -12,6 +12,7 @@
 from qgis.PyQt.QtGui import QIcon, QColor
 from qgis.PyQt.QtWidgets import QAction, QMessageBox, QMenu, QToolButton
 from qgis.PyQt.QtCore import QSettings
+from qgis.PyQt.QtWidgets import QApplication
 from qgis.core import QgsProject, Qgis, QgsCoordinateTransform, QgsFeatureRequest, QgsSpatialIndex, QgsVectorLayer, QgsWkbTypes
 from qgis.gui import QgsHighlight
 from collections import defaultdict
@@ -50,6 +51,7 @@ class LaneBatchUpdateTool:
     MODE_SHOW_ERROR_RESULTS = "show_error_results"
     MODE_CLEAR_ALL_HIGHLIGHTS = "clear_all_highlights"
     MODE_JS2JD_CONVERT = "js2jd_convert"
+    MODE_REFRESH_PROJECT = "refresh_project"
 
     def __init__(self, iface):
         self.iface = iface
@@ -121,6 +123,7 @@ class LaneBatchUpdateTool:
             (self.MODE_FIX_LANE_NUM, "修复 LANE_NUM", "icon_lane_num_fix.svg"),
             (self.MODE_CLEAR_ALL_HIGHLIGHTS, "取消全部高亮", "icon_clear_right_straight.svg"),
             (self.MODE_JS2JD_CONVERT, "Js2jd 转换", "icon_js2jd_convert.svg"),
+            (self.MODE_REFRESH_PROJECT, "刷新当前工程", "icon_refresh_project.svg"),
             (self.MODE_REMOVE_ALL, "移除所有图层", "icon_remove_layers.svg"),
         )
         for mode, label, icon_name in buttons:
@@ -253,6 +256,7 @@ class LaneBatchUpdateTool:
                 ("layer_switch", "图层快捷切换", "icon_layer_switch.png"),
                 ("layer_visibility", "图层显隐方案", "icon_layer_visibility.png"),
                 ("side_button_toggle", "侧键切换图层", "icon_side_button_toggle.svg"),
+                (self.MODE_REFRESH_PROJECT, "刷新当前工程", "icon_refresh_project.svg"),
                 (self.MODE_REMOVE_ALL, "移除所有图层", "icon_remove_layers.svg"),
             ],
         }
@@ -278,7 +282,8 @@ class LaneBatchUpdateTool:
     def _handle_menu_action(self, item_id):
         if item_id in [self.MODE_SPEED, self.MODE_SET_ROAD2, self.MODE_VIRTUAL, 
                        self.MODE_SHOW_ERROR_RESULTS, self.MODE_FIX_LANE_NUM, 
-                       self.MODE_CLEAR_ALL_HIGHLIGHTS, self.MODE_JS2JD_CONVERT, 
+                       self.MODE_CLEAR_ALL_HIGHLIGHTS, self.MODE_JS2JD_CONVERT,
+                       self.MODE_REFRESH_PROJECT,
                        self.MODE_REMOVE_ALL]:
             self.run(mode=item_id)
         elif item_id == "reconstruct_prep":
@@ -2001,6 +2006,75 @@ class LaneBatchUpdateTool:
             lane_layer.rollBack()
             raise RuntimeError("\n".join(errors))
 
+    def refresh_project(self):
+        """保存编辑图层后，整体重载工程中的图层和地图画布。"""
+        project = QgsProject.instance()
+        canvas = self.iface.mapCanvas()
+        extent = canvas.extent()
+        selected = {
+            layer.id(): layer.selectedFeatureIds()
+            for layer in project.mapLayers().values()
+            if isinstance(layer, QgsVectorLayer)
+        }
+
+        editing_layers = [
+            layer for layer in project.mapLayers().values()
+            if isinstance(layer, QgsVectorLayer) and layer.isEditable()
+        ]
+        save_failures = []
+        for layer in editing_layers:
+            try:
+                if not layer.commitChanges():
+                    errors = layer.commitErrors()
+                    detail = "; ".join(errors) if errors else "未知保存错误"
+                    save_failures.append("%s：%s" % (layer.name(), detail))
+            except (AttributeError, RuntimeError) as exc:
+                save_failures.append("%s：%s" % (layer.name(), exc))
+
+        if save_failures:
+            QMessageBox.critical(
+                self.iface.mainWindow(),
+                "刷新失败",
+                "以下编辑图层保存失败，已停止整体刷新：\n%s" % "\n".join(save_failures),
+            )
+            return
+
+        # 保存工程文件中的图层状态、样式和项目设置。
+        try:
+            if project.fileName():
+                project.write()
+        except (AttributeError, RuntimeError) as exc:
+            self.log("保存工程文件失败：%s" % exc)
+
+        refreshed = 0
+        refresh_failures = []
+        for layer in project.mapLayers().values():
+            if not hasattr(layer, "reload"):
+                continue
+            try:
+                layer.reload()
+                layer.triggerRepaint()
+                refreshed += 1
+            except (AttributeError, RuntimeError) as exc:
+                refresh_failures.append("%s：%s" % (layer.name(), exc))
+                self.log("刷新图层失败：%s (%s)" % (layer.name(), exc))
+
+        QApplication.processEvents()
+        for layer_id, feature_ids in selected.items():
+            layer = project.mapLayer(layer_id)
+            if layer is not None and feature_ids:
+                layer.selectByIds(feature_ids)
+        canvas.setExtent(extent)
+        canvas.refresh()
+        self.log("已保存 %d 个编辑图层并刷新 %d 个图层" % (len(editing_layers), refreshed))
+
+        message = "已保存 %d 个编辑图层，重新载入 %d 个图层并重绘地图。" % (
+            len(editing_layers), refreshed
+        )
+        if refresh_failures:
+            message += "\n以下图层刷新失败：\n%s" % "\n".join(refresh_failures)
+        QMessageBox.information(self.iface.mainWindow(), "刷新当前工程", message)
+
     def remove_all_layers(self):
         project = QgsProject.instance()
         layer_count = len(project.mapLayers())
@@ -2023,6 +2097,10 @@ class LaneBatchUpdateTool:
         QMessageBox.information(None, "操作完成", f"已移除 {layer_count} 个图层。\n源数据文件未删除。")
 
     def run(self, mode):
+        if mode == self.MODE_REFRESH_PROJECT:
+            self.refresh_project()
+            return
+
         if mode == self.MODE_REMOVE_ALL:
             self.remove_all_layers()
             return
