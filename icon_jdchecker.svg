@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect x="4" y="4" width="56" height="56" rx="10" fill="#263238"/>
+  <path d="M18 17h28v30H18z" fill="#fff" stroke="#00a884" stroke-width="3"/>
+  <path d="M23 25h18M23 32h18M23 39h11" stroke="#00a884" stroke-width="3" stroke-linecap="round"/>
+  <path d="m39 39 3 3 7-8" fill="none" stroke="#ffca28" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="7" y="56" fill="#fff" font-size="8" font-family="Arial" font-weight="bold">JD 3.16</text>
+</svg>

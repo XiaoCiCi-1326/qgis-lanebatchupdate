@@ -61,7 +61,7 @@ class FileNameSearchController:
         for action in (self.search_action, self.copy_action):
             if action is not None:
                 try:
-                    self.iface.removePluginVectorMenu("车道处理工具", action)
+                    self.iface.removePluginMenu("车道处理工具", action)
                 except (AttributeError, RuntimeError):
                     pass
         self.search_action = None

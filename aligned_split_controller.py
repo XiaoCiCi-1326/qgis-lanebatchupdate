@@ -189,7 +189,7 @@ class AlignedSplitController:
             except (TypeError, RuntimeError):
                 pass
             self.iface.removeVectorToolBarIcon(self.action)
-            self.iface.removePluginFromVectorMenu("车道处理工具", self.action)
+            self.iface.removePluginMenu("车道处理工具", self.action)
         self.action = None
         self.map_tool = None
 

@@ -61,7 +61,7 @@ class ExcelPreviewController:
     def unload(self):
         for action in self.actions:
             self.iface.removeVectorToolBarIcon(action)
-            self.iface.removePluginFromVectorMenu("车道处理工具", action)
+            self.iface.removePluginMenu("车道处理工具", action)
         self.actions = []
 
     # ---------- 日志 ----------

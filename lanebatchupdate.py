@@ -36,6 +36,7 @@ from .raster_compress_controller import RasterCompressController
 from .js2jd_convert_controller import Js2jdConvertController
 from .filename_search_controller import FileNameSearchController
 from .shpchecker_controller import ShpCheckerController
+from .jdchecker_controller import JdCheckerController
 
 
 class LaneBatchUpdateTool:
@@ -77,6 +78,7 @@ class LaneBatchUpdateTool:
         self.js2jd_convert = Js2jdConvertController(iface, self.plugin_dir, self.log)
         self.filename_search = FileNameSearchController(iface, self.plugin_dir)
         self.shpchecker = ShpCheckerController(iface, self.plugin_dir, self.error_results, self.log)
+        self.jdchecker = JdCheckerController(iface, self.plugin_dir, self.log)
         self.error_results.configure_checkers(
             self.run_check_right_straight_overlap,
             self.boundary_length.apply_filter,
@@ -140,7 +142,8 @@ class LaneBatchUpdateTool:
         self.raster_compress.initGui(self.actions)
         self.js2jd_convert.initGui(self.actions)
         self.filename_search.initGui(self.actions)
-        self.shpchecker.initGui(self.actions)
+        self.jdchecker.initGui(self.actions)
+        self.shpchecker.initGui(self.actions, self.jdchecker.action)
 
         # 根据保存的模式初始化工具栏布局
         print(f"[LaneBatchUpdate] 当前工具栏模式: {self.toolbar_mode}")
@@ -165,7 +168,7 @@ class LaneBatchUpdateTool:
         for action in self.actions:
             # shpchecker owns a custom QToolButton: its QAction is kept in the
             # menu but must not be added again as a second toolbar button.
-            if action is self.shpchecker.action:
+            if action is self.shpchecker.action or action is self.jdchecker.action:
                 continue
             if action is self.filename_search.search_action:
                 self.filename_search.add_toolbar_button()
@@ -236,6 +239,7 @@ class LaneBatchUpdateTool:
             "质检与显示": [
                 (self.MODE_SHOW_ERROR_RESULTS, "全部规则", "icon_error_results.svg"),
                 (self.MODE_CLEAR_ALL_HIGHLIGHTS, "取消全部高亮", "icon_clear_right_straight.svg"),
+                ("shpchecker_316", "3.16扳手错质检", "icon_316_wrench.svg"),
             ],
             "辅助工具": [
                 ("inertial_follow", "惯导地图跟随", "icon_inertial_follow.svg"),
@@ -307,6 +311,8 @@ class LaneBatchUpdateTool:
             self.filename_search.copy_search_results()
         elif item_id == "shpchecker_316":
             self.shpchecker.run()
+        elif item_id == "jdchecker_316":
+            self.jdchecker.run()
 
     def unload(self):
         self.clear_overlap_highlights()
@@ -317,7 +323,7 @@ class LaneBatchUpdateTool:
             except (AttributeError, RuntimeError):
                 pass
             try:
-                self.iface.removePluginVectorMenu("车道处理工具", self.toggle_action)
+                self.iface.removePluginMenu("车道处理工具", self.toggle_action)
             except (AttributeError, RuntimeError):
                 pass
         
@@ -327,7 +333,7 @@ class LaneBatchUpdateTool:
             except (AttributeError, RuntimeError):
                 pass
             try:
-                self.iface.removePluginVectorMenu("车道处理工具", action)
+                self.iface.removePluginMenu("车道处理工具", action)
             except (AttributeError, RuntimeError):
                 pass
         
@@ -360,6 +366,7 @@ class LaneBatchUpdateTool:
         self.raster_compress.unload()
         self.js2jd_convert.unload()
         self.shpchecker.unload()
+        self.jdchecker.unload()
 
     def clear_overlap_highlights(self):
         for highlight in self.overlap_highlights:

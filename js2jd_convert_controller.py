@@ -21,9 +21,12 @@ class Js2jdConvertController:
         """注册到主插件的 actions 列表中（由主插件调用）"""
         pass
 
+    def unload(self):
+        """Release controller resources; this controller has no persistent GUI action."""
+        return None
+
     def _find_groovy(self):
         """查找 Groovy 可执行文件路径"""
-        # 常见的 Groovy 安装路径
         possible_paths = [
             r"C:\Program Files\Groovy\groovy-2.5.23\bin\groovy.bat",
             r"C:\Program Files (x86)\Groovy\groovy-2.5.23\bin\groovy.bat",
@@ -31,23 +34,20 @@ class Js2jdConvertController:
             r"C:\Program Files\Groovy\bin\groovy.bat",
             r"C:\Groovy\groovy-2.5.23\bin\groovy.bat",
         ]
-        
-        # 检查环境变量中的 GROOVY_HOME
+
         groovy_home = os.environ.get("GROOVY_HOME")
         if groovy_home:
             possible_paths.insert(0, os.path.join(groovy_home, "bin", "groovy.bat"))
-        
-        # 尝试从 PATH 中查找
+
         for path in os.environ.get("PATH", "").split(os.pathsep):
             groovy_bat = os.path.join(path, "groovy.bat")
             if os.path.exists(groovy_bat):
                 return groovy_bat
-        
-        # 检查预定义路径
+
         for path in possible_paths:
             if os.path.exists(path):
                 return path
-        
+
         return None
 
     def _find_java(self):
