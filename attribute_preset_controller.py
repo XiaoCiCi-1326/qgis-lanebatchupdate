@@ -556,12 +556,22 @@ class NewFeatureDialog(QDialog):
             QMessageBox.warning(self, "新增失败", "属性表单未初始化。")
             return
         
-        # 从表单读取用户填写的属性值
+        # 先将当前输入控件中的值同步回 QgsAttributeForm 的临时要素。
+        # 仅调用 form.feature() 可能拿到打开表单时的旧属性，导致手工输入丢失。
+        try:
+            save_result = self.form.save()
+        except (AttributeError, RuntimeError) as exc:
+            QMessageBox.warning(self, "新增失败", f"无法保存属性表单：{exc}")
+            return
+        if save_result is False:
+            QMessageBox.warning(self, "新增失败", "属性表单中的输入值无法保存，请检查字段格式。")
+            return
+
         updated_feature = self.form.feature()
         if updated_feature is None:
             QMessageBox.warning(self, "新增失败", "无法读取属性表单中的要素。")
             return
-        
+
         # 将用户填写的属性应用到要素
         self.feature.setAttributes(updated_feature.attributes())
         
