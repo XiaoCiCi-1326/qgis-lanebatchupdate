@@ -82,6 +82,7 @@ class LayerToolsController:
         self.canvas = iface.mapCanvas()
         self.actions = []
         self.switch_actions = []
+        self.switch_mouse_filters = []
         self.vis_actions = []
         self.status_switch = None
         self.status_vis = None
@@ -184,17 +185,46 @@ class LayerToolsController:
 
     def _load_switch_shortcuts(self):
         self._clear_switch_shortcuts()
-        for layer_name, shortcut in self._read_json("LayerSwitch/bindings").items():
-            if shortcut:
+        for layer_name, binding in self._read_json("LayerSwitch/bindings").items():
+            if not binding:
+                continue
+            # 兼容旧格式（纯字符串）和新格式（字典）
+            if isinstance(binding, dict):
+                bind_type = binding.get("type")
+                bind_value = binding.get("value")
+                if bind_type == "keyboard":
+                    self._create_shortcut_action(
+                        u"切换到: " + layer_name,
+                        bind_value,
+                        lambda checked=False, name=layer_name: self.switch_to_layer(name),
+                        self.switch_actions,
+                    )
+                elif bind_type == "mouse":
+                    button_code = int(bind_value)
+                    mouse_filter = _CanvasEventFilter(
+                        lambda name=layer_name: self.switch_to_layer(name),
+                        {button_code}
+                    )
+                    self.canvas.viewport().installEventFilter(mouse_filter)
+                    self.switch_mouse_filters.append(mouse_filter)
+            else:
+                # 旧格式兼容
                 self._create_shortcut_action(
                     u"切换到: " + layer_name,
-                    shortcut,
+                    binding,
                     lambda checked=False, name=layer_name: self.switch_to_layer(name),
                     self.switch_actions,
                 )
 
     def _clear_switch_shortcuts(self):
         self._clear_shortcuts(self.switch_actions)
+        # 清除鼠标事件过滤器
+        for mouse_filter in self.switch_mouse_filters:
+            try:
+                self.canvas.viewport().removeEventFilter(mouse_filter)
+            except RuntimeError:
+                pass
+        self.switch_mouse_filters.clear()
 
     def switch_to_layer(self, layer_name):
         for layer in QgsProject.instance().mapLayers().values():
@@ -213,43 +243,113 @@ class LayerToolsController:
         bindings = self._read_json("LayerSwitch/bindings")
         dialog = QDialog(self.iface.mainWindow())
         dialog.setWindowTitle(u"图层快捷切换设置")
-        dialog.resize(520, 420)
+        dialog.resize(560, 480)
         layout = QVBoxLayout(dialog)
         form = QFormLayout()
         layer_combo = QComboBox()
         layer_combo.addItems(self._layer_names())
-        key_edit = QKeySequenceEdit()
+        
+        # 自定义按键输入框（支持键盘和鼠标）
+        key_input_widget = QWidget()
+        key_input_layout = QHBoxLayout(key_input_widget)
+        key_input_layout.setContentsMargins(0, 0, 0, 0)
+        key_display = QLineEdit()
+        key_display.setReadOnly(True)
+        key_display.setPlaceholderText(u"点击'设置'后按下键盘或鼠标按键")
+        key_input_layout.addWidget(key_display)
+        key_capture_btn = QPushButton(u"设置")
+        key_input_layout.addWidget(key_capture_btn)
+        
+        current_binding = {"type": "", "value": ""}  # type: "keyboard" or "mouse"
+        
+        def capture_key():
+            capture_dialog = QDialog(dialog)
+            capture_dialog.setWindowTitle(u"按下快捷键")
+            capture_dialog.resize(350, 120)
+            capture_layout = QVBoxLayout(capture_dialog)
+            capture_label = QLabel(u"请按下键盘按键或鼠标按键...")
+            capture_label.setStyleSheet("QLabel { font-size: 12pt; padding: 20px; }")
+            capture_layout.addWidget(capture_label)
+            
+            def on_key_press(event):
+                if event.type() == QEvent.KeyPress:
+                    key_seq = QKeySequence(event.key() | int(event.modifiers())).toString()
+                    if key_seq and key_seq != "Esc":
+                        current_binding["type"] = "keyboard"
+                        current_binding["value"] = key_seq
+                        key_display.setText(u"键盘: " + key_seq)
+                        capture_dialog.accept()
+                    elif key_seq == "Esc":
+                        capture_dialog.reject()
+                return False
+            
+            def on_mouse_press(event):
+                if event.type() == QEvent.MouseButtonPress:
+                    button_code = int(event.button())
+                    button_name = next((label for code, label in MOUSE_BUTTONS if code == button_code), None)
+                    if button_name:
+                        current_binding["type"] = "mouse"
+                        current_binding["value"] = str(button_code)
+                        key_display.setText(button_name)
+                        capture_dialog.accept()
+                return True
+            
+            capture_dialog.keyPressEvent = on_key_press
+            
+            mouse_filter = QObject()
+            def mouse_event_filter(obj, event):
+                if event.type() == QEvent.MouseButtonPress:
+                    return on_mouse_press(event)
+                return False
+            mouse_filter.eventFilter = mouse_event_filter
+            capture_dialog.installEventFilter(mouse_filter)
+            
+            capture_dialog.exec_()
+        
+        key_capture_btn.clicked.connect(capture_key)
+        
         auto_edit = QCheckBox(u"切换图层时自动开启编辑模式")
         auto_edit.setChecked(QSettings().value("LayerSwitch/autoEdit", False, type=bool))
         form.addRow(u"图层", layer_combo)
-        form.addRow(u"快捷键", key_edit)
+        form.addRow(u"快捷键", key_input_widget)
         layout.addLayout(form)
         add_button = QPushButton(u"添加或更新")
         layout.addWidget(add_button)
         table = QTableWidget(0, 3, dialog)
         table.setHorizontalHeaderLabels([u"图层", u"快捷键", u"操作"])
-        table.setColumnWidth(0, 220)
-        table.setColumnWidth(1, 130)
+        table.setColumnWidth(0, 200)
+        table.setColumnWidth(1, 180)
         layout.addWidget(table)
         layout.addWidget(auto_edit)
 
         def refresh_table():
             table.setRowCount(len(bindings))
-            for row, (name, shortcut) in enumerate(sorted(bindings.items())):
+            for row, (name, binding) in enumerate(sorted(bindings.items())):
                 table.setItem(row, 0, QTableWidgetItem(name))
-                table.setItem(row, 1, QTableWidgetItem(shortcut))
+                # 解析绑定显示
+                if isinstance(binding, dict):
+                    if binding.get("type") == "mouse":
+                        button_code = int(binding.get("value", 0))
+                        display_text = next((label for code, label in MOUSE_BUTTONS if code == button_code), binding.get("value"))
+                    else:
+                        display_text = u"键盘: " + binding.get("value", "")
+                else:
+                    # 兼容旧格式（纯字符串）
+                    display_text = u"键盘: " + binding
+                table.setItem(row, 1, QTableWidgetItem(display_text))
                 delete_button = QPushButton(u"删除")
                 delete_button.clicked.connect(lambda checked=False, n=name: (bindings.pop(n, None), refresh_table()))
                 table.setCellWidget(row, 2, delete_button)
 
         def add_binding():
             name = layer_combo.currentText()
-            shortcut = key_edit.keySequence().toString()
-            if not name or not shortcut:
+            if not name or not current_binding.get("value"):
                 QMessageBox.warning(dialog, u"提示", u"请选择图层并设置快捷键。")
                 return
-            bindings[name] = shortcut
-            key_edit.clear()
+            bindings[name] = {"type": current_binding["type"], "value": current_binding["value"]}
+            key_display.clear()
+            current_binding["type"] = ""
+            current_binding["value"] = ""
             refresh_table()
 
         add_button.clicked.connect(add_binding)
@@ -526,7 +626,20 @@ class LayerToolsController:
         self._message(u"切换图层", u"'%s' %s" % (self.target, u"已显示" if visible else u"已隐藏"))
 
     def _update_status_widgets(self):
-        switch_parts = [u"%s=%s" % (shortcut, name[:8]) for name, shortcut in self._read_json("LayerSwitch/bindings").items() if shortcut]
+        switch_parts = []
+        for name, binding in self._read_json("LayerSwitch/bindings").items():
+            if not binding:
+                continue
+            if isinstance(binding, dict):
+                if binding.get("type") == "mouse":
+                    button_code = int(binding.get("value", 0))
+                    button_name = next((label for code, label in MOUSE_BUTTONS if code == button_code), "?")
+                    switch_parts.append(u"%s=%s" % (button_name[:6], name[:8]))
+                else:
+                    switch_parts.append(u"%s=%s" % (binding.get("value", "")[:6], name[:8]))
+            else:
+                switch_parts.append(u"%s=%s" % (binding[:6], name[:8]))
+        
         vis_parts = [u"%s=%s" % (scheme.get("shortcut"), name[:6]) for name, scheme in self._read_json("LayerVis/schemes").items() if scheme.get("shortcut")]
         if self.status_switch is not None:
             self.status_switch.setText(u"  |  ".join(switch_parts))

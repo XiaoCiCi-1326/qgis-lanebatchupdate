@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <defs>
+    <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#6366f1;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#8b5cf6;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <!-- 眼睛轮廓 -->
+  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="url(#grad1)" stroke-width="2" fill="none"/>
+  <!-- 眼睛中心圆 -->
+  <circle cx="12" cy="12" r="3" stroke="url(#grad1)" stroke-width="2" fill="none"/>
+  <!-- 斜线（隐藏符号） -->
+  <line x1="3" y1="3" x2="21" y2="21" stroke="#ef4444" stroke-width="2.5"/>
+</svg>

@@ -14,6 +14,7 @@ from qgis.PyQt.QtWidgets import (
     QComboBox,
     QDialog,
     QDoubleSpinBox,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -222,7 +223,7 @@ class ErrorResultsController:
 
     def show(self, title="全部规则"):
         if self.dialog is None:
-            self.dialog = ErrorResultsDialog(self, self.iface.mainWindow())
+            self.dialog = ErrorResultsDialog(self, None)
         self.dialog.setWindowTitle(title)
         self.dialog.show_rules()
         self.dialog.show()
@@ -538,6 +539,7 @@ class ErrorResultsDialog(QDialog):
         self.controller = controller
         self.settings = QSettings()
         self.size_key = "LaneBatchUpdate/errorResultsDialogSize"
+        self.position_key = "LaneBatchUpdate/errorResultsDialogPosition"
         self.boundary_operator_key = "LaneBatchUpdate/boundaryLengthOperator"
         self.boundary_threshold_key = "LaneBatchUpdate/boundaryLengthThreshold"
         self.extra_endpoint_short_enabled_key = "LaneBatchUpdate/extraEndpointShortEnabled"
@@ -546,12 +548,18 @@ class ErrorResultsDialog(QDialog):
         self.overlap_length_threshold_key = "LaneBatchUpdate/overlapLengthThreshold"
         self.overlap_exact_enabled_key = "LaneBatchUpdate/overlapExactEnabled"
         self.setWindowTitle("全部规则")
-        self.setMinimumSize(760, 420)
+        self.setWindowFlag(Qt.Window, True)
+        self.setWindowModality(Qt.NonModal)
+        self.setAttribute(Qt.WA_DeleteOnClose, False)
+        self.setMinimumSize(760, 560)
         saved_size = self.settings.value(self.size_key)
         if saved_size is not None and hasattr(saved_size, "isValid") and saved_size.isValid():
             self.resize(saved_size)
         else:
-            self.resize(900, 520)
+            self.resize(900, 560)
+        saved_position = self.settings.value(self.position_key)
+        if saved_position is not None and hasattr(saved_position, "isValid") and saved_position.isValid():
+            self.move(saved_position)
 
         layout = QVBoxLayout(self)
         self.tabs = QTabWidget(self)
@@ -572,22 +580,32 @@ class ErrorResultsDialog(QDialog):
     def _build_rules_page(self):
         page = QWidget(self)
         layout = QVBoxLayout(page)
-        layout.addWidget(QLabel("规则列表", page))
 
+        header = QHBoxLayout()
+        title = QLabel("规则中心", page)
+        title.setStyleSheet("font-size: 16px; font-weight: bold;")
+        header.addWidget(title)
+        self.selection_summary = QLabel(page)
+        header.addWidget(self.selection_summary)
+        header.addStretch(1)
+        layout.addLayout(header)
+
+        content = QVBoxLayout()
+        rule_group = QGroupBox("检测规则", page)
+        rule_layout = QVBoxLayout(rule_group)
         batch_buttons = QHBoxLayout()
-        select_all_button = QPushButton("全部选择", page)
+        select_all_button = QPushButton("全部选择", rule_group)
         select_all_button.clicked.connect(lambda: self._set_all_rules(Qt.Checked))
-        clear_all_button = QPushButton("全部取消", page)
+        clear_all_button = QPushButton("全部取消", rule_group)
         clear_all_button.clicked.connect(lambda: self._set_all_rules(Qt.Unchecked))
-        invert_button = QPushButton("反选", page)
+        invert_button = QPushButton("反选", rule_group)
         invert_button.clicked.connect(self._invert_rule_selection)
         batch_buttons.addWidget(select_all_button)
         batch_buttons.addWidget(clear_all_button)
         batch_buttons.addWidget(invert_button)
-        batch_buttons.addStretch(1)
-        layout.addLayout(batch_buttons)
+        rule_layout.addLayout(batch_buttons)
 
-        self.rules_list = QListWidget(page)
+        self.rules_list = QListWidget(rule_group)
         self.right_straight_rule = self._add_rule("右转压直行")
         self.boundary_rule = self._add_rule("BOUNDARY长度检测")
         self.speed_rule = self._add_rule("SPEEDLIMIT不能为空且不能为40")
@@ -598,7 +616,10 @@ class ErrorResultsDialog(QDialog):
         self.overlapping_line_rule = self._add_rule("BOUNDARY/LANE重合线检查")
         self.lane_num_rule = self._add_rule("LANE_NUM字段检测")
         self.rules_list.currentItemChanged.connect(self._update_rule_options)
-        layout.addWidget(self.rules_list, 1)
+        self.rules_list.itemChanged.connect(self._update_selection_summary)
+        rule_layout.addWidget(self.rules_list, 1)
+        content.addWidget(rule_group)
+        layout.addLayout(content, 1)
 
         self.boundary_options = QWidget(page)
         options_layout = QHBoxLayout(self.boundary_options)
@@ -687,6 +708,8 @@ class ErrorResultsDialog(QDialog):
         buttons.addStretch(1)
         layout.addLayout(buttons)
         self.rules_list.setCurrentItem(self.right_straight_rule)
+        self._update_rule_options(self.right_straight_rule, None)
+        self._update_selection_summary()
         return page
 
     def _build_results_page(self):
@@ -711,6 +734,10 @@ class ErrorResultsDialog(QDialog):
         self.detail_edit.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
         layout.addWidget(self.detail_edit)
         buttons = QHBoxLayout()
+        self.show_rules_button = QPushButton("返回规则设置", page)
+        self.show_rules_button.setToolTip("切换到规则设置页，窗口保持打开")
+        self.show_rules_button.clicked.connect(self.show_rules)
+        buttons.addWidget(self.show_rules_button)
         clear_button = QPushButton("清空记录", page)
         clear_button.clicked.connect(self._clear_results)
         buttons.addWidget(clear_button)
@@ -731,6 +758,7 @@ class ErrorResultsDialog(QDialog):
 
     def show_rules(self):
         self.tabs.setCurrentWidget(self.rules_page)
+        self._update_selection_summary()
 
     def show_results(self):
         self.refresh(self.controller.records)
@@ -772,6 +800,13 @@ class ErrorResultsDialog(QDialog):
         self.boundary_options.setVisible(current is self.boundary_rule)
         self.extra_endpoint_options.setVisible(current is self.extra_endpoint_rule)
         self.overlap_options.setVisible(current is self.overlapping_line_rule)
+
+    def _update_selection_summary(self, item=None):
+        selected = sum(
+            self.rules_list.item(row).checkState() == Qt.Checked
+            for row in range(self.rules_list.count())
+        )
+        self.selection_summary.setText("已选择 %d / %d 条" % (selected, self.rules_list.count()))
 
     def _set_all_rules(self, state):
         for row in range(self.rules_list.count()):
@@ -941,6 +976,7 @@ class ErrorResultsDialog(QDialog):
         self._save_extra_endpoint_settings()
         self._save_overlap_settings()
         self.settings.setValue(self.size_key, self.size())
+        self.settings.setValue(self.position_key, self.pos())
         self.settings.sync()
         super().closeEvent(event)
 
