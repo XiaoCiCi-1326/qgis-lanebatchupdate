@@ -284,7 +284,7 @@ class FeatureVisibilityController:
 
     def _apply_visibility_edit_mode(self, layer, hidden_ids):
         """编辑模式下的显隐实现 - 使用规则渲染器"""
-        from qgis.core import QgsRuleBasedRenderer, QgsSymbol
+        from qgis.core import QgsRuleBasedRenderer, QgsSymbol, QgsMarkerSymbol, QgsLineSymbol, QgsFillSymbol
         
         layer_id = layer.id()
         
@@ -294,53 +294,88 @@ class FeatureVisibilityController:
                 try:
                     layer.setRenderer(self.original_renderers[layer_id].clone())
                     del self.original_renderers[layer_id]
-                except Exception:
-                    pass
+                except Exception as e:
+                    self._warning(u"要素显隐", u"恢复渲染器失败: %s" % str(e))
             return
         
-        # 保存原始渲染器（第一次修改时）
-        if layer_id not in self.original_renderers:
-            self.original_renderers[layer_id] = layer.renderer().clone()
-        
-        # 构建过滤表达式 - 只显示未隐藏的要素
-        id_list = ",".join(str(fid) for fid in hidden_ids)
-        filter_expr = "$id NOT IN (%s)" % id_list
-        
-        # 获取原始渲染器
-        original_renderer = self.original_renderers[layer_id]
-        
-        # 如果原始渲染器已经是规则渲染器，直接在根规则上添加过滤表达式
-        if isinstance(original_renderer, QgsRuleBasedRenderer):
-            rule_renderer = original_renderer.clone()
-            root_rule = rule_renderer.rootRule()
-            # 为根规则添加过滤条件
-            if root_rule:
-                # 遍历所有子规则，添加过滤表达式
-                for child in root_rule.children():
-                    existing_filter = child.filterExpression()
-                    if existing_filter:
-                        child.setFilterExpression("(%s) AND (%s)" % (existing_filter, filter_expr))
-                    else:
-                        child.setFilterExpression(filter_expr)
-        else:
-            # 对于非规则渲染器，创建一个规则包装它
-            # 获取默认符号
-            symbol = original_renderer.symbol().clone() if hasattr(original_renderer, 'symbol') else None
+        try:
+            # 保存原始渲染器（第一次修改时）
+            if layer_id not in self.original_renderers:
+                self.original_renderers[layer_id] = layer.renderer().clone()
             
-            # 创建根规则
-            root_rule = QgsRuleBasedRenderer.Rule(symbol)
+            # 构建过滤表达式 - 只显示未隐藏的要素
+            id_list = ",".join(str(fid) for fid in hidden_ids)
+            filter_expr = "$id NOT IN (%s)" % id_list
             
-            # 添加显示规则
-            visible_rule = QgsRuleBasedRenderer.Rule(symbol.clone() if symbol else None)
-            visible_rule.setFilterExpression(filter_expr)
-            visible_rule.setLabel(u"可见要素")
-            root_rule.appendChild(visible_rule)
+            # 获取原始渲染器
+            original_renderer = self.original_renderers[layer_id]
             
-            # 创建规则渲染器
-            rule_renderer = QgsRuleBasedRenderer(root_rule)
-        
-        layer.setRenderer(rule_renderer)
-        self._message(u"要素显隐", u"编辑模式下使用渲染器过滤", duration=2)
+            # 如果原始渲染器已经是规则渲染器，直接在根规则上添加过滤表达式
+            if isinstance(original_renderer, QgsRuleBasedRenderer):
+                rule_renderer = original_renderer.clone()
+                root_rule = rule_renderer.rootRule()
+                # 为根规则添加过滤条件
+                if root_rule and root_rule.children():
+                    # 遍历所有子规则，添加过滤表达式
+                    for child in root_rule.children():
+                        existing_filter = child.filterExpression()
+                        if existing_filter:
+                            child.setFilterExpression("(%s) AND (%s)" % (existing_filter, filter_expr))
+                        else:
+                            child.setFilterExpression(filter_expr)
+                else:
+                    # 根规则没有子规则，添加过滤到根规则
+                    if root_rule:
+                        root_rule.setFilterExpression(filter_expr)
+            else:
+                # 对于非规则渲染器，创建一个规则包装它
+                # 获取默认符号
+                symbol = None
+                try:
+                    if hasattr(original_renderer, 'symbol'):
+                        symbol = original_renderer.symbol()
+                        if symbol:
+                            symbol = symbol.clone()
+                except Exception:
+                    pass
+                
+                # 如果无法获取符号，根据图层几何类型创建默认符号
+                if not symbol:
+                    from qgis.core import QgsWkbTypes
+                    geom_type = layer.geometryType()
+                    if geom_type == QgsWkbTypes.PointGeometry:
+                        symbol = QgsMarkerSymbol.createSimple({})
+                    elif geom_type == QgsWkbTypes.LineGeometry:
+                        symbol = QgsLineSymbol.createSimple({})
+                    elif geom_type == QgsWkbTypes.PolygonGeometry:
+                        symbol = QgsFillSymbol.createSimple({})
+                
+                if not symbol:
+                    self._warning(u"要素显隐", u"无法获取图层符号，编辑模式下暂不支持显隐")
+                    return
+                
+                # 创建根规则
+                root_rule = QgsRuleBasedRenderer.Rule(None)
+                
+                # 添加显示规则
+                visible_rule = QgsRuleBasedRenderer.Rule(symbol.clone())
+                visible_rule.setFilterExpression(filter_expr)
+                visible_rule.setLabel(u"可见要素")
+                root_rule.appendChild(visible_rule)
+                
+                # 创建规则渲染器
+                rule_renderer = QgsRuleBasedRenderer(root_rule)
+            
+            layer.setRenderer(rule_renderer)
+            self._message(u"要素显隐", u"编辑模式下使用渲染器过滤", duration=2)
+            
+        except Exception as e:
+            self._warning(u"要素显隐", u"编辑模式下设置显隐失败: %s" % str(e))
+            # 清除记录
+            if layer_id in self.hidden_features:
+                self.hidden_features[layer_id].clear()
+            if layer_id in self.original_renderers:
+                del self.original_renderers[layer_id]
 
     def _apply_visibility_normal_mode(self, layer, hidden_ids):
         """非编辑模式下的显隐实现 - 使用 subset string"""
