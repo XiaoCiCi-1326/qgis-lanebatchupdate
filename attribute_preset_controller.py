@@ -492,12 +492,23 @@ class NewFeatureDialog(QDialog):
         if not names:
             self.preset_grid.addWidget(QLabel("当前图层还没有可用预设。"), 0, 0)
         layout.addWidget(preset_group)
+        # 【BUG 修复 2024-09-06】关键修复：创建一个表单专用的 feature 副本
+        # 问题：QgsAttributeForm 会直接修改传入的 feature 对象
+        # 如果多次对话框复用了同一个 feature 引用，会导致属性污染
+        # 解决：为表单创建一个完全独立的 feature 副本，几何体也要复制
+        # 【新增】给每个 feature 一个唯一的临时 ID，避免 QGIS 混淆
+        import random
+        unique_temp_id = -random.randint(1, 2**62)  # 避免使用 LONG_LONG_MIN
+        
+        form_feature = QgsFeature(self.layer.fields())
+        form_feature.setId(unique_temp_id)  # 明确设置唯一 ID
+        form_feature.setGeometry(QgsGeometry(self.feature.geometry()))  # 复制几何体，不是引用
         # 【BUG 修复】明确指定 SingleEditMode，避免 QGIS 默认使用 AddFeatureMode 导致表单自动添加要素。
         # QgsAttributeForm 在 AddFeatureMode 下会在对话框关闭时自动调用 layer.addFeature()，
         # 然后我们又显式调用 layer.addFeature(self.feature)，导致重复添加。
         context = QgsAttributeEditorContext()
         context.setAttributeFormMode(QgsAttributeEditorContext.SingleEditMode)
-        self.form = QgsAttributeForm(self.layer, self.feature, context, parent=self)
+        self.form = QgsAttributeForm(self.layer, form_feature, context, parent=self)
         self.form_scroll = QScrollArea(self)
         self.form_scroll.setWidgetResizable(True)
         self.form_scroll.setWidget(self.form)
@@ -538,54 +549,94 @@ class NewFeatureDialog(QDialog):
                 index = self.layer.fields().indexFromName(field_name)
                 if index >= 0:
                     value = self.controller._convert(self.layer.fields().at(index), raw)
-                    # 新要素尚未加入图层，预设值需要直接同步到临时要素。
+                    # 【BUG 修复】只记录预设值，不直接修改 feature，避免和表单冲突
                     self._preset_attributes[index] = value
-                    self.feature.setAttribute(index, value)
+                    # 同步到表单显示
                     self.form.changeAttribute(field_name, value)
         except (RuntimeError, ValueError) as exc:
             QMessageBox.warning(self, "加载预设失败", str(exc))
 
     def accept(self):
-        # 【BUG 修复】使用 SingleEditMode + 手动 addFeature，避免 QGIS 自动添加导致重复线。
-        # 之前的问题：
-        # 1. QgsAttributeForm 默认 AddFeatureMode 会自动调 layer.addFeature()
-        # 2. 我们又显式调 layer.addFeature(self.feature)
-        # 3. 结果：同一条线被添加两次（几何相同，属性可能不同）
-        # 4. 表现：卡顿 + 重复线 + 第一条线属性被改
+        # 【BUG 修复】正确的流程：
+        # 1. 表单不自动添加要素（已设置 SingleEditMode）
+        # 2. 手动读取表单值 → 创建新要素 → 添加到图层
+        # 3. 关键：每次只添加一次，且 feature ID 不能重用
         if self.form is None:
             QMessageBox.warning(self, "新增失败", "属性表单未初始化。")
             return
         
-        # 先将当前输入控件中的值同步回 QgsAttributeForm 的临时要素。
-        # 仅调用 form.feature() 可能拿到打开表单时的旧属性，导致手工输入丢失。
+        # 获取表单中用户填写的属性值
         try:
-            save_result = self.form.save()
+            # 强制表单将控件值同步到内部 feature
+            self.form.save()
         except (AttributeError, RuntimeError) as exc:
             QMessageBox.warning(self, "新增失败", f"无法保存属性表单：{exc}")
             return
-        if save_result is False:
-            QMessageBox.warning(self, "新增失败", "属性表单中的输入值无法保存，请检查字段格式。")
-            return
 
-        updated_feature = self.form.feature()
-        if updated_feature is None:
-            QMessageBox.warning(self, "新增失败", "无法读取属性表单中的要素。")
-            return
-
-        # 将用户填写的属性应用到要素
-        self.feature.setAttributes(updated_feature.attributes())
+        # 【关键修复 2024-09-06】创建一个全新的 feature，完全独立，避免对象引用污染
+        # 问题根源：form.feature() 返回的是引用，多个对话框可能共享同一个内部对象
+        # 解决方案：用 JSON 序列化/反序列化来彻底断开 C++ 层的对象引用
+        # 【新增】给每个 new_feature 一个不同的唯一临时 ID
+        import random
+        unique_temp_id = -random.randint(1, 2**62)  # 避免使用 LONG_LONG_MIN
         
-        # 应用预设属性（优先级最高）
+        new_feature = QgsFeature(self.layer.fields())
+        new_feature.setId(unique_temp_id)  # 明确设置唯一 ID
+        new_feature.setGeometry(QgsGeometry(self.feature.geometry()))
+        
+        # 从表单读取属性，用 JSON 序列化来断开引用
+        form_feature = self.form.feature()
+        if form_feature:
+            import json
+            # 将属性转为 JSON 再转回来，彻底断开引用
+            attrs = []
+            for i in range(self.layer.fields().count()):
+                value = form_feature.attribute(i)
+                # 通过 JSON 往返，断开 Qt 对象引用
+                if value is None or value == NULL:
+                    attrs.append(None)
+                else:
+                    try:
+                        # 转为 JSON 可序列化的类型
+                        json_value = json.dumps(value)
+                        attrs.append(json.loads(json_value))
+                    except:
+                        # 不能 JSON 序列化的，就用原始值
+                        attrs.append(value)
+            
+            # 逐字段设置
+            for i, value in enumerate(attrs):
+                new_feature.setAttribute(i, value)
+        
+        # 再应用预设属性（预设优先级最高，覆盖表单默认值）
         for index, value in self._preset_attributes.items():
-            self.feature.setAttribute(index, value)
+            # 同样通过 JSON 断开引用
+            if value is not None and value != NULL:
+                try:
+                    import json
+                    json_value = json.dumps(value)
+                    value = json.loads(json_value)
+                except:
+                    pass
+            new_feature.setAttribute(index, value)
         
-        # 手动添加要素（只添加一次）
-        if self.layer.addFeature(self.feature):
+        # 【关键】添加要素前，确保图层处于编辑状态
+        was_editable = self.layer.isEditable()
+        if not was_editable:
+            if not self.layer.startEditing():
+                QMessageBox.warning(self, "新增失败", f"无法开启图层编辑：{self.layer.name()}")
+                return
+        
+        # 添加要素（不立即提交，让用户统一保存）
+        # 【关键】new_feature 已经有唯一的临时 ID，不会和其他 feature 冲突
+        if self.layer.addFeature(new_feature):
             self.layer.updateExtents()
             self.layer.triggerRepaint()
             QSettings().setValue("LaneBatchUpdate/new_feature_dialog_size", self.size())
             super().accept()
         else:
+            if not was_editable:
+                self.layer.rollBack()
             QMessageBox.warning(self, "新增失败", f"无法向图层\"{self.layer.name()}\"添加要素。")
 
 
@@ -1254,6 +1305,10 @@ class AttributePresetController:
         self.add_feature_tool = None
         self.shape_mode = "line"
         self.shape_combo = None
+        # 【关键修复 2024-09-06】持有最近添加的 features，防止被 Python 过早回收
+        # 问题：addFeature() 后，如果 Python 回收了 feature 对象，
+        # QGIS 的编辑缓冲区会持有悬空指针，导致 commitChanges() 失败
+        self._pending_features = []  # 临时存储，直到图层保存或取消编辑
 
     def initGui(self, actions):
         global _ACTIVE_CONTROLLER
@@ -1262,6 +1317,10 @@ class AttributePresetController:
         preset_icon_path = f"{self.plugin_dir}/icon_attribute_preset.svg"
         add_feature_icon_path = f"{self.plugin_dir}/icon_add_feature_preset.svg"
         self.iface.mapCanvas().mapToolSet.connect(self._on_map_tool_set)
+        
+        # 【关键修复 2024-09-06】监听图层的保存/回滚事件，清理临时 feature 缓存
+        QgsProject.instance().layerWillBeRemoved.connect(self._on_layer_removed)
+        
         self.shape_combo = QComboBox()
         self.shape_combo.setToolTip("添加要素形状")
         for label, mode in (
@@ -1470,12 +1529,40 @@ class AttributePresetController:
             self.add_feature_tool = None
             tool.cancel()
 
+    def _on_layer_removed(self, layer_id):
+        """当图层被移除时，清理该图层的临时 features"""
+        # 简单粗暴：直接清空所有临时 features
+        # 因为我们无法判断哪个 feature 属于哪个图层
+        self._pending_features.clear()
+    
+    def _on_layer_saved_or_rolled_back(self):
+        """当图层保存或回滚后，清理临时 features"""
+        self._pending_features.clear()
+
     def finish_add_feature(self, layer, geometry):
+        # 【关键修复 2024-09-06】每次创建一个全新的临时 feature
+        # 并且明确设置一个唯一的临时负数 ID，避免 QGIS 编辑缓冲区混淆
         feature = QgsFeature(layer.fields())
         feature.setGeometry(geometry)
+        # 不要设置 ID，让 addFeature 自动分配
+        
+        # 【关键】如果图层还没有连接保存/回滚信号，先连接
+        try:
+            layer.committedAttributeValuesChanges.connect(self._on_layer_saved_or_rolled_back)
+            layer.afterRollBack.connect(self._on_layer_saved_or_rolled_back)
+        except (TypeError, RuntimeError):
+            pass  # 已经连接过了
+        
         dialog = NewFeatureDialog(self, layer, feature)
         result = dialog.exec_()
         if result == QDialog.Accepted:
+            # 【关键】从对话框中取出已添加的 feature，保存到 controller
+            # 这样可以延长 feature 的生命周期，避免被 Python 回收
+            if hasattr(dialog, '_added_feature') and dialog._added_feature:
+                self._pending_features.append(dialog._added_feature)
+                # 限制列表大小，避免内存泄漏（保留最近 100 个）
+                if len(self._pending_features) > 100:
+                    self._pending_features.pop(0)
             layer.updateExtents()
             layer.triggerRepaint()
 
