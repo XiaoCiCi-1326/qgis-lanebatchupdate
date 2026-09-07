@@ -117,12 +117,13 @@ class FileNameSearchController:
             return None, None, None
 
         field_names = {field.name().upper() for field in layer.fields()}
-        if "FILE_NAME" not in field_names:
-            QMessageBox.critical(None, "字段缺失", "当前图层缺少 'FILE_NAME' 字段")
+        if "FILE_NAME" not in field_names and "FILENAME" not in field_names:
+            QMessageBox.critical(None, "字段缺失", "当前图层缺少 'FILE_NAME' 或 'FILENAME' 字段")
             return None, None, None
 
         file_name_field = next(
-            field.name() for field in layer.fields() if field.name().upper() == "FILE_NAME"
+            (field.name() for field in layer.fields() if field.name().upper() in ("FILE_NAME", "FILENAME")),
+            None
         )
         file_names = []
         for feature in selected_features:
