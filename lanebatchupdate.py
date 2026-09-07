@@ -40,6 +40,7 @@ from .shpchecker_controller import ShpCheckerController
 from .jdchecker_controller import JdCheckerController
 from .layer_tools_controller import LayerToolsController
 from .feature_visibility_controller import FeatureVisibilityController
+from .image_viewer_controller import ImageViewerController
 
 
 class LaneBatchUpdateTool:
@@ -85,6 +86,7 @@ class LaneBatchUpdateTool:
         self.jdchecker = JdCheckerController(iface, self.plugin_dir, self.log)
         self.layer_tools = LayerToolsController(iface, self.plugin_dir)
         self.feature_visibility = FeatureVisibilityController(iface, self.plugin_dir)
+        self.image_viewer = ImageViewerController(iface, self.plugin_dir)
         self.error_results.configure_checkers(
             self.run_check_right_straight_overlap,
             self.boundary_length.apply_filter,
@@ -153,6 +155,7 @@ class LaneBatchUpdateTool:
         self.shpchecker.initGui(self.actions, self.jdchecker.action)
         self.layer_tools.initGui(self.actions)
         self.feature_visibility.initGui(self.actions)
+        self.image_viewer.initGui(self.actions)
 
         # 根据保存的模式初始化工具栏布局
         print(f"[LaneBatchUpdate] 当前工具栏模式: {self.toolbar_mode}")
@@ -161,8 +164,10 @@ class LaneBatchUpdateTool:
             self._apply_flat_mode()
         else:
             print(f"[LaneBatchUpdate] 应用菜单模式，使用分类菜单")
-            # 菜单模式下不需要做额外处理，按钮已经通过菜单添加了
-            pass
+            self._create_categorized_menu()
+
+        # 照片查看器始终显示为一个带下拉菜单的按钮。
+        self.image_viewer.add_toolbar_button()
 
     def _toggle_toolbar_mode(self):
         if self.toolbar_mode == "flat":
@@ -179,6 +184,15 @@ class LaneBatchUpdateTool:
             # menu but must not be added again as a second toolbar button.
             if action is self.shpchecker.action or action is self.jdchecker.action:
                 continue
+            if action in (
+                self.image_viewer.pairing_action,
+                self.image_viewer.view_action,
+                self.image_viewer.prev_action,
+                self.image_viewer.next_action,
+                self.image_viewer.dock_action,
+            ):
+                # 图片查看器统一由一个下拉 QToolButton 承载。
+                continue
             if action is self.filename_search.search_action:
                 self.filename_search.add_toolbar_button()
             else:
@@ -188,6 +202,7 @@ class LaneBatchUpdateTool:
         """切换工具栏模式 - 移除所有按钮后重新应用"""
         # 移除所有 action（包括主文件和子控制器的）
         self.filename_search.remove_toolbar_button()
+        self.image_viewer.remove_toolbar_button()
         for action in self.actions:
             try:
                 self.iface.removeVectorToolBarIcon(action)
@@ -214,6 +229,9 @@ class LaneBatchUpdateTool:
             self._apply_flat_mode()
         else:
             self._create_categorized_menu()
+
+        # 图片查看器始终保持为一个独立的下拉按钮。
+        self.image_viewer.add_toolbar_button()
 
     def _create_categorized_menu(self):
         self.main_menu = QMenu()
@@ -392,6 +410,7 @@ class LaneBatchUpdateTool:
         self.jdchecker.unload()
         self.layer_tools.unload()
         self.feature_visibility.unload()
+        self.image_viewer.unload()
 
     def clear_overlap_highlights(self):
         for highlight in self.overlap_highlights:
