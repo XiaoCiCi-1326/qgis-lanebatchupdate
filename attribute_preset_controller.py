@@ -1257,17 +1257,17 @@ class AttributePresetController:
     LOG_TAG = "车道处理工具"
     BUILTIN_PRESETS = {
         "BOUNDARY": {
-            "单虚线": {"COLOR": "0", "TYPE": "1"},
-            "双虚线": {"COLOR": "0", "TYPE": "2"},
-            "单实线": {"COLOR": "0", "TYPE": "3"},
-            "双实线": {"COLOR": "0", "TYPE": "4"},
-            "左虚右实": {"COLOR": "0", "TYPE": "5"},
-            "左实右虚": {"COLOR": "0", "TYPE": "6"},
+            "单虚线": {"COLOR": "0", "TYPE": "1", "LAYER_NUM": "NULL"},
+            "双虚线": {"COLOR": "0", "TYPE": "2", "LAYER_NUM": "NULL"},
+            "单实线": {"COLOR": "0", "TYPE": "3", "LAYER_NUM": "NULL"},
+            "双实线": {"COLOR": "0", "TYPE": "4", "LAYER_NUM": "NULL"},
+            "左虚右实": {"COLOR": "0", "TYPE": "5", "LAYER_NUM": "NULL"},
+            "左实右虚": {"COLOR": "0", "TYPE": "6", "LAYER_NUM": "NULL"},
             "95": {"COLOR": "95", "TYPE": "11", "LAYER_NUM": "2"},
             "0": {"COLOR": "0", "TYPE": "11", "LAYER_NUM": "2"},
-            "防护栏": {"COLOR": "95", "TYPE": "8"},
-            "马路牙": {"COLOR": "15", "TYPE": "7"},
-            "虚拟线": {"COLOR": "0", "TYPE": "9"},
+            "防护栏": {"COLOR": "95", "TYPE": "8", "LAYER_NUM": "NULL"},
+            "马路牙": {"COLOR": "15", "TYPE": "7", "LAYER_NUM": "NULL"},
+            "虚拟线": {"COLOR": "0", "TYPE": "9", "LAYER_NUM": "NULL"},
         },
         "STOPLINE": {
             "红绿灯停止线": {"TYPE": "1"},
@@ -1293,6 +1293,7 @@ class AttributePresetController:
         "PROHIBITED_AREA": {
             "绿化带": {"TYPE": "1", "HEIGHT": "95"},
             "站台": {"TYPE": "2", "HEIGHT": "15"},
+            "0": {"TYPE": "0", "HEIGHT": "95"},
         },
     }
 
