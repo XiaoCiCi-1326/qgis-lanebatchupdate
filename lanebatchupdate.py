@@ -129,6 +129,7 @@ class LaneBatchUpdateTool:
             (self.MODE_SET_ROAD2, "ROAD_TYPE=2", "icon_road2.png"),
             (self.MODE_VIRTUAL, "转向个数刷值", "icon_virtual.png"),
             (self.MODE_FIX_LANE_NUM, "修复 LANE_NUM", "icon_lane_num_fix.svg"),
+            (self.MODE_SHOW_ERROR_RESULTS, "全部规则", "icon_error_results.svg"),
             (self.MODE_CLEAR_ALL_HIGHLIGHTS, "取消全部高亮", "icon_clear_right_straight.svg"),
             (self.MODE_JS2JD_CONVERT, "Js2jd 转换", "icon_js2jd_convert.svg"),
             (self.MODE_REFRESH_PROJECT, "刷新当前工程", "icon_refresh_project.svg"),
