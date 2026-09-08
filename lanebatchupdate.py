@@ -255,7 +255,7 @@ class LaneBatchUpdateTool:
             (self.MODE_SPEED, "限速刷值（覆盖）", "icon_speed.png"),
             (self.MODE_SET_ROAD2, "ROAD_TYPE=2（覆盖）", "icon_road2.png"),
             (self.MODE_VIRTUAL, "转向个数刷取（覆盖）", "icon_virtual.png"),
-            (self.MODE_MESH_MAP_TILE_ID, "MESH=N / MAP_TILE.ID=n（覆盖）", "icon_mesh_map_tile_id.svg"),
+            (self.MODE_MESH_MAP_TILE_ID, "MESH=n / MAP_TILE.ID=n（覆盖）", "icon_mesh_map_tile_id.svg"),
         ):
             action = QAction(QIcon(os.path.join(self.plugin_dir, icon_name)), label, parent)
             action.triggered.connect(lambda checked=False, m=mode: self.run(mode=m))
@@ -287,15 +287,15 @@ class LaneBatchUpdateTool:
         self.attribute_fill_toolbar_action = None
 
     def _run_mesh_map_tile_id(self):
-        """覆盖所有图层的 MESH=N，并覆盖 MAP_TILE.ID 为用户输入值。"""
+        """使用用户输入值 n 覆盖所有图层的 MESH 和 MAP_TILE.ID。"""
         value, accepted = QInputDialog.getText(
-            self.iface.mainWindow(), "覆盖 MAP_TILE.ID", "请输入 MAP_TILE 的 ID 值 n："
+            self.iface.mainWindow(), "覆盖 MESH / MAP_TILE.ID", "请输入值 n（将写入 MESH 和 MAP_TILE.ID）："
         )
         if not accepted:
             return None
         value = str(value).strip()
         if not value:
-            QMessageBox.warning(self.iface.mainWindow(), "输入无效", "MAP_TILE.ID 不能为空。")
+            QMessageBox.warning(self.iface.mainWindow(), "输入无效", "输入值 n 不能为空。")
             return None
 
         mesh_changed = 0
@@ -309,7 +309,7 @@ class LaneBatchUpdateTool:
                 if not missing:
                     self.ensure_editing(layer)
                     for feature in layer.getFeatures():
-                        feature[fields["MESH"]] = "N"
+                        feature[fields["MESH"]] = value
                         if not layer.updateFeature(feature):
                             raise RuntimeError("图层 %s 的 MESH 写入失败。" % layer.name())
                         mesh_changed += 1
@@ -2265,8 +2265,8 @@ class LaneBatchUpdateTool:
             QMessageBox.information(
                 self.iface.mainWindow(),
                 "覆盖完成",
-                "已覆盖所有图层 MESH=N，共 %d 条；MAP_TILE.ID=%s，共 %d 条。" % (
-                    mesh_count, value, map_tile_count
+                "已覆盖所有图层 MESH=%s，共 %d 条；MAP_TILE.ID=%s，共 %d 条。" % (
+                    value, mesh_count, value, map_tile_count
                 ),
             )
             return
