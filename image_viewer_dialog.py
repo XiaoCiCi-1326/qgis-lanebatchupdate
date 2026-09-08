@@ -159,8 +159,9 @@ class _ImageCanvas(QWidget):
 class ImageViewerDialog(QDialog):
     """照片查看窗口 - 独立窗口"""
 
-    # 信号：切换到面板模式
+    # 信号：切换模式或地图跟随状态
     switch_to_dock_mode = pyqtSignal()
+    follow_map_changed = pyqtSignal(bool)
 
     def __init__(self, parent=None):
         # parent=None 使窗口独立
@@ -245,13 +246,25 @@ class ImageViewerDialog(QDialog):
         )
         self.btn_switch_dock.clicked.connect(self._on_switch_to_dock)
 
+        self.btn_follow_map = QPushButton("画布跟随")
+        self.btn_follow_map.setToolTip("跟随当前照片要素移动地图，保持当前比例尺")
+        self.btn_follow_map.setCheckable(True)
+        self.btn_follow_map.setStyleSheet(
+            "QPushButton { background: #0F172A; color: #F8FAFC; "
+            "border: 1px solid #4c9b91; padding: 6px 12px; border-radius: 4px; }"
+            "QPushButton:hover { background: #286b62; }"
+            "QPushButton:checked { background: #4c9b91; border-color: #7DD3C0; }"
+        )
+        self.btn_follow_map.toggled.connect(self.follow_map_changed)
+
         self.btn_close = QPushButton("关闭")
 
-        for b in (self.btn_fit, self.btn_actual, self.btn_pin, self.btn_switch_dock):
+        for b in (self.btn_fit, self.btn_actual, self.btn_pin, self.btn_switch_dock, self.btn_follow_map):
             b.setStyleSheet(
                 "QPushButton { background: #0F172A; color: #F8FAFC; "
                 "border: 1px solid #4c9b91; padding: 6px 12px; border-radius: 4px; }"
                 "QPushButton:hover { background: #286b62; }"
+                "QPushButton:checked { background: #4c9b91; border-color: #7DD3C0; }"
             )
             btn_row.addWidget(b)
 
@@ -290,6 +303,12 @@ class ImageViewerDialog(QDialog):
     def _on_switch_to_dock(self):
         """切换到面板模式"""
         self.switch_to_dock_mode.emit()
+
+    def set_follow_map_enabled(self, enabled):
+        """同步控制器保存的地图跟随状态，不重复发出信号。"""
+        self.btn_follow_map.blockSignals(True)
+        self.btn_follow_map.setChecked(enabled)
+        self.btn_follow_map.blockSignals(False)
 
     def set_navigation_callbacks(self, previous_callback, next_callback):
         """设置仅供独立照片窗口使用的导航回调。"""

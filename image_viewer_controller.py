@@ -20,7 +20,7 @@ from qgis.PyQt.QtWidgets import (
     QDockWidget, QLabel, QVBoxLayout, QWidget, QPushButton, QHBoxLayout,
     QSizePolicy
 )
-from qgis.core import Qgis, QgsProject, QgsVectorLayer
+from qgis.core import Qgis, QgsCoordinateTransform, QgsProject, QgsVectorLayer
 
 from .image_viewer_dialog import ImageViewerDialog, _ImageCanvas
 from .image_viewer_pairing_dialog import ImageViewerPairingDialog
@@ -69,9 +69,11 @@ class ImageViewerController(QObject):
         self.viewer_dialog = None
         self.dock_widget = None
         self.dock_label = None
+        self.dock_btn_follow_map = None
 
         # 显示模式：'window' 或 'dock'
         self.display_mode = 'window'
+        self.follow_map_enabled = False
 
         # 信号连接
         self._layer_connections = {}
@@ -333,8 +335,38 @@ class ImageViewerController(QObject):
         self.all_fids = sorted([f.id() for f in layer.getFeatures()])
         self.current_fid = selected_fids[0]  # 只显示第一个
 
-        # 显示照片
+        # 显示照片，并在开启画布跟随时定位选中要素。
         self._show_photo(layer, self.current_fid)
+        self._follow_feature_on_map(layer, self.current_fid)
+
+    def _follow_feature_on_map(self, layer, fid):
+        """仅移动地图中心到照片要素，保持当前画布比例尺。"""
+        if not self.follow_map_enabled:
+            return
+        feature = layer.getFeature(fid)
+        if not feature.isValid() or feature.geometry().isEmpty():
+            return
+        canvas = self.iface.mapCanvas()
+        center = feature.geometry().boundingBox().center()
+        if layer.crs() != canvas.mapSettings().destinationCrs():
+            transform = QgsCoordinateTransform(
+                layer.crs(), canvas.mapSettings().destinationCrs(), QgsProject.instance()
+            )
+            center = transform.transform(center)
+        canvas.setCenter(center)
+        canvas.refresh()
+
+    def _set_follow_map_enabled(self, enabled):
+        """更新两个显示模式共用的画布跟随开关。"""
+        self.follow_map_enabled = enabled
+        if self.viewer_dialog:
+            self.viewer_dialog.set_follow_map_enabled(enabled)
+        if self.dock_btn_follow_map:
+            self.dock_btn_follow_map.blockSignals(True)
+            self.dock_btn_follow_map.setChecked(enabled)
+            self.dock_btn_follow_map.blockSignals(False)
+        if enabled and self.current_layer and self.current_fid is not None:
+            self._follow_feature_on_map(self.current_layer, self.current_fid)
 
     # ---------- 照片显示 ----------
     def _show_photo(self, layer, fid):
@@ -375,6 +407,8 @@ class ImageViewerController(QObject):
             self.viewer_dialog = ImageViewerDialog(None)  # 独立窗口
             self.viewer_dialog.set_navigation_callbacks(self.show_prev, self.show_next)
             self.viewer_dialog.switch_to_dock_mode.connect(self._switch_to_dock_mode)
+            self.viewer_dialog.follow_map_changed.connect(self._set_follow_map_enabled)
+            self.viewer_dialog.set_follow_map_enabled(self.follow_map_enabled)
 
         was_visible = self.viewer_dialog.isVisible()
         self.viewer_dialog.load_image(img_path)
@@ -441,6 +475,19 @@ class ImageViewerController(QObject):
         )
         self.dock_btn_fit.clicked.connect(self._on_dock_fit_clicked)
         info_row.addWidget(self.dock_btn_fit)
+
+        self.dock_btn_follow_map = QPushButton("画布跟随")
+        self.dock_btn_follow_map.setToolTip("跟随当前照片要素移动地图，保持当前比例尺")
+        self.dock_btn_follow_map.setCheckable(True)
+        self.dock_btn_follow_map.setChecked(self.follow_map_enabled)
+        self.dock_btn_follow_map.setStyleSheet(
+            "QPushButton { background: #0F172A; color: #F8FAFC; "
+            "border: 1px solid #4c9b91; padding: 4px 8px; border-radius: 4px; }"
+            "QPushButton:hover { background: #286b62; }"
+            "QPushButton:checked { background: #4c9b91; border-color: #7DD3C0; }"
+        )
+        self.dock_btn_follow_map.toggled.connect(self._set_follow_map_enabled)
+        info_row.addWidget(self.dock_btn_follow_map)
 
         info_row.addStretch(1)
 
