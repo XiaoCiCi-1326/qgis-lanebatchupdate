@@ -10,7 +10,7 @@
   移除所有图层   → 从当前 QGIS 工程中移除全部图层
 """
 from qgis.PyQt.QtGui import QIcon, QColor
-from qgis.PyQt.QtWidgets import QAction, QMessageBox, QMenu, QToolButton
+from qgis.PyQt.QtWidgets import QAction, QMessageBox, QMenu, QToolButton, QInputDialog
 from qgis.PyQt.QtCore import QSettings
 from qgis.PyQt.QtWidgets import QApplication
 from qgis.core import QgsProject, Qgis, QgsCoordinateTransform, QgsFeatureRequest, QgsSpatialIndex, QgsVectorLayer, QgsWkbTypes
@@ -48,6 +48,7 @@ class LaneBatchUpdateTool:
     MODE_SPEED = "speed"
     MODE_SET_ROAD2 = "set_road2"
     MODE_VIRTUAL = "virtual"
+    MODE_MESH_MAP_TILE_ID = "mesh_map_tile_id"
     MODE_REMOVE_ALL = "remove_all"
     MODE_CHECK_RIGHT_STRAIGHT = "check_right_straight"
     MODE_FIX_LANE_NUM = "fix_lane_num"
@@ -68,6 +69,8 @@ class LaneBatchUpdateTool:
         self.toggle_action = None
         self.menu_button = None
         self.main_menu = None
+        self.attribute_fill_button = None
+        self.attribute_fill_toolbar_action = None
         self.reconstruct = ReconstructController(iface, self.plugin_dir, self.log)
         self.lane_fix = LaneFixController(iface, self.plugin_dir, self.log)
         self.excel_preview = ExcelPreviewController(iface, self.plugin_dir, self.log)
@@ -125,7 +128,6 @@ class LaneBatchUpdateTool:
             (self.MODE_SPEED, "限速刷值", "icon_speed.png"),
             (self.MODE_SET_ROAD2, "ROAD_TYPE=2", "icon_road2.png"),
             (self.MODE_VIRTUAL, "转向个数刷值", "icon_virtual.png"),
-            (self.MODE_SHOW_ERROR_RESULTS, "全部规则", "icon_error_results.svg"),
             (self.MODE_FIX_LANE_NUM, "修复 LANE_NUM", "icon_lane_num_fix.svg"),
             (self.MODE_CLEAR_ALL_HIGHLIGHTS, "取消全部高亮", "icon_clear_right_straight.svg"),
             (self.MODE_JS2JD_CONVERT, "Js2jd 转换", "icon_js2jd_convert.svg"),
@@ -159,6 +161,7 @@ class LaneBatchUpdateTool:
         self.layer_tools.initGui(self.actions)
         self.feature_visibility.initGui(self.actions)
         self.image_viewer.initGui(self.actions)
+        self._create_attribute_fill_button()
 
         # 根据保存的模式初始化工具栏布局
         print(f"[LaneBatchUpdate] 当前工具栏模式: {self.toolbar_mode}")
@@ -193,8 +196,8 @@ class LaneBatchUpdateTool:
                 self.image_viewer.prev_action,
                 self.image_viewer.next_action,
                 self.image_viewer.dock_action,
-            ):
-                # 图片查看器统一由一个下拉 QToolButton 承载。
+            ) or action.text() in ("限速刷值", "ROAD_TYPE=2", "转向个数刷值"):
+                # 刷值功能统一由一个下拉 QToolButton 承载。
                 continue
             if action is self.filename_search.search_action:
                 self.filename_search.add_toolbar_button()
@@ -205,6 +208,7 @@ class LaneBatchUpdateTool:
         """切换工具栏模式 - 移除所有按钮后重新应用"""
         # 移除所有 action（包括主文件和子控制器的）
         self.filename_search.remove_toolbar_button()
+        self._remove_attribute_fill_button()
         self.image_viewer.remove_toolbar_button()
         for action in self.actions:
             try:
@@ -235,17 +239,114 @@ class LaneBatchUpdateTool:
 
         # 图片查看器始终保持为一个独立的下拉按钮。
         self.image_viewer.add_toolbar_button()
+        self._create_attribute_fill_button()
+
+    def _create_attribute_fill_button(self):
+        """创建统一承载四个覆盖式刷值操作的下拉按钮。"""
+        if self.attribute_fill_button is not None:
+            self._remove_attribute_fill_button()
+        parent = self.iface.mainWindow()
+        self.attribute_fill_button = QToolButton(parent)
+        self.attribute_fill_button.setDefaultAction(
+            QAction(QIcon(os.path.join(self.plugin_dir, "icon_speed.png")), "属性刷值", parent)
+        )
+        menu = QMenu(self.attribute_fill_button)
+        for mode, label, icon_name in (
+            (self.MODE_SPEED, "限速刷值（覆盖）", "icon_speed.png"),
+            (self.MODE_SET_ROAD2, "ROAD_TYPE=2（覆盖）", "icon_road2.png"),
+            (self.MODE_VIRTUAL, "转向个数刷取（覆盖）", "icon_virtual.png"),
+            (self.MODE_MESH_MAP_TILE_ID, "MESH=N / MAP_TILE.ID=n（覆盖）", "icon_mesh_map_tile_id.svg"),
+        ):
+            action = QAction(QIcon(os.path.join(self.plugin_dir, icon_name)), label, parent)
+            action.triggered.connect(lambda checked=False, m=mode: self.run(mode=m))
+            menu.addAction(action)
+        self.attribute_fill_button.setMenu(menu)
+        self.attribute_fill_button.setPopupMode(QToolButton.InstantPopup)
+        self.attribute_fill_toolbar_action = None
+        self._add_attribute_fill_button()
+
+    def _add_attribute_fill_button(self):
+        toolbar = self.iface.vectorToolBar()
+        if toolbar is not None and self.attribute_fill_button is not None:
+            if self.attribute_fill_toolbar_action is None:
+                self.attribute_fill_toolbar_action = toolbar.addWidget(self.attribute_fill_button)
+
+    def _remove_attribute_fill_button(self):
+        toolbar = self.iface.vectorToolBar()
+        if toolbar is not None and self.attribute_fill_toolbar_action is not None:
+            try:
+                toolbar.removeAction(self.attribute_fill_toolbar_action)
+            except (AttributeError, RuntimeError):
+                pass
+        if self.attribute_fill_button is not None:
+            try:
+                self.attribute_fill_button.deleteLater()
+            except (AttributeError, RuntimeError):
+                pass
+            self.attribute_fill_button = None
+        self.attribute_fill_toolbar_action = None
+
+    def _run_mesh_map_tile_id(self):
+        """覆盖所有图层的 MESH=N，并覆盖 MAP_TILE.ID 为用户输入值。"""
+        value, accepted = QInputDialog.getText(
+            self.iface.mainWindow(), "覆盖 MAP_TILE.ID", "请输入 MAP_TILE 的 ID 值 n："
+        )
+        if not accepted:
+            return None
+        value = str(value).strip()
+        if not value:
+            QMessageBox.warning(self.iface.mainWindow(), "输入无效", "MAP_TILE.ID 不能为空。")
+            return None
+
+        mesh_changed = 0
+        map_tile_changed = 0
+        map_tile_layers = []
+        try:
+            for layer in QgsProject.instance().mapLayers().values():
+                if not isinstance(layer, QgsVectorLayer):
+                    continue
+                fields, missing = self.resolve_field_map(layer, ["MESH"])
+                if not missing:
+                    self.ensure_editing(layer)
+                    for feature in layer.getFeatures():
+                        feature[fields["MESH"]] = "N"
+                        if not layer.updateFeature(feature):
+                            raise RuntimeError("图层 %s 的 MESH 写入失败。" % layer.name())
+                        mesh_changed += 1
+                if layer.name().upper() == "MAP_TILE":
+                    map_tile_layers.append(layer)
+
+            if not map_tile_layers:
+                raise RuntimeError("未找到 MAP_TILE 图层。")
+            for layer in map_tile_layers:
+                fields, missing = self.resolve_field_map(layer, ["ID"])
+                if missing:
+                    raise RuntimeError("MAP_TILE 缺少字段：ID")
+                self.ensure_editing(layer)
+                for feature in layer.getFeatures():
+                    feature[fields["ID"]] = value
+                    if not layer.updateFeature(feature):
+                        raise RuntimeError("MAP_TILE 的 ID 写入失败。")
+                    map_tile_changed += 1
+
+            for layer in QgsProject.instance().mapLayers().values():
+                if isinstance(layer, QgsVectorLayer) and layer.isEditable():
+                    ok, errors = self.commit_layer(layer)
+                    if not ok:
+                        raise RuntimeError("图层 %s 保存失败：%s" % (layer.name(), "; ".join(errors)))
+                    layer.triggerRepaint()
+        except RuntimeError:
+            for layer in QgsProject.instance().mapLayers().values():
+                if isinstance(layer, QgsVectorLayer) and layer.isEditable():
+                    layer.rollBack()
+            raise
+
+        return mesh_changed, map_tile_changed, value
 
     def _create_categorized_menu(self):
         self.main_menu = QMenu()
         
         categories = {
-            "属性刷值": [
-                (self.MODE_SPEED, "限速刷值", "icon_speed.png"),
-                (self.MODE_SET_ROAD2, "ROAD_TYPE=2", "icon_road2.png"),
-                (self.MODE_VIRTUAL, "转向个数刷值", "icon_virtual.png"),
-                (self.MODE_FIX_LANE_NUM, "修复 LANE_NUM", "icon_lane_num_fix.svg"),
-            ],
             "数据重构": [
                 ("reconstruct_prep", "准备三份数据", "icon_prepare_data.svg"),
                 ("reconstruct_full", "一键重构(全程)", "icon_rebuild_all.svg"),
@@ -306,7 +407,7 @@ class LaneBatchUpdateTool:
             toolbar.addWidget(self.menu_button)
 
     def _handle_menu_action(self, item_id):
-        if item_id in [self.MODE_SPEED, self.MODE_SET_ROAD2, self.MODE_VIRTUAL, 
+        if item_id in [self.MODE_SPEED, self.MODE_SET_ROAD2, self.MODE_VIRTUAL, self.MODE_MESH_MAP_TILE_ID,
                        self.MODE_SHOW_ERROR_RESULTS, self.MODE_FIX_LANE_NUM, 
                        self.MODE_CLEAR_ALL_HIGHLIGHTS, self.MODE_JS2JD_CONVERT,
                        self.MODE_REFRESH_PROJECT,
@@ -363,7 +464,7 @@ class LaneBatchUpdateTool:
 
     def unload(self):
         self.clear_overlap_highlights()
-        
+
         if self.toggle_action:
             try:
                 self.iface.removeVectorToolBarIcon(self.toggle_action)
@@ -373,7 +474,16 @@ class LaneBatchUpdateTool:
                 self.iface.removePluginMenu("车道处理工具", self.toggle_action)
             except (AttributeError, RuntimeError):
                 pass
-        
+
+        self._remove_attribute_fill_button()
+        if self.attribute_fill_button:
+            try:
+                self.attribute_fill_button.deleteLater()
+            except (AttributeError, RuntimeError):
+                pass
+            self.attribute_fill_button = None
+        self.attribute_fill_toolbar_action = None
+
         for action in self.actions:
             try:
                 self.iface.removeVectorToolBarIcon(action)
@@ -2140,6 +2250,25 @@ class LaneBatchUpdateTool:
 
         if mode == self.MODE_JS2JD_CONVERT:
             self.js2jd_convert.run()
+            return
+
+        if mode == self.MODE_MESH_MAP_TILE_ID:
+            self.begin_run()
+            try:
+                result = self._run_mesh_map_tile_id()
+            except RuntimeError as exc:
+                QMessageBox.critical(None, "操作失败", str(exc))
+                return
+            if result is None:
+                return
+            mesh_count, map_tile_count, value = result
+            QMessageBox.information(
+                self.iface.mainWindow(),
+                "覆盖完成",
+                "已覆盖所有图层 MESH=N，共 %d 条；MAP_TILE.ID=%s，共 %d 条。" % (
+                    mesh_count, value, map_tile_count
+                ),
+            )
             return
 
         self.begin_run()

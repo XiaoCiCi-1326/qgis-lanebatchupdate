@@ -35,6 +35,7 @@ RELEASE_FILES = (
     "icon_speed.png",
     "icon_road2.png",
     "icon_virtual.png",
+    "icon_mesh_map_tile_id.svg",
     "icon_check_right_straight.svg",
     "icon_clear_right_straight.svg",
     "icon_lane_fix.png",
