@@ -22,6 +22,7 @@ from qgis.PyQt.QtWidgets import (
     QSizePolicy,
     QVBoxLayout,
     QWidget,
+    QApplication,
 )
 
 
@@ -158,6 +159,9 @@ class _ImageCanvas(QWidget):
 class ImageViewerDialog(QDialog):
     """照片查看窗口 - 独立窗口"""
 
+    # 信号：切换到面板模式
+    switch_to_dock_mode = pyqtSignal()
+
     def __init__(self, parent=None):
         # parent=None 使窗口独立
         super().__init__(parent)
@@ -165,6 +169,7 @@ class ImageViewerDialog(QDialog):
         self._previous_callback = None
         self._next_callback = None
         self._shortcuts_enabled = False
+        self._is_always_on_top = False
 
         self.setWindowTitle("惯导照片查看")
         self.setWindowFlags(
@@ -217,18 +222,41 @@ class ImageViewerDialog(QDialog):
         btn_row = QHBoxLayout()
         self.btn_fit = QPushButton("适应窗口")
         self.btn_actual = QPushButton("原始大小")
+
+        # 置顶按钮
+        self.btn_pin = QPushButton("📌 置顶")
+        self.btn_pin.setToolTip("窗口置顶显示")
+        self.btn_pin.setCheckable(True)
+        self.btn_pin.setStyleSheet(
+            "QPushButton { background: #0F172A; color: #F8FAFC; "
+            "border: 1px solid #4c9b91; padding: 6px 12px; border-radius: 4px; }"
+            "QPushButton:hover { background: #286b62; }"
+            "QPushButton:checked { background: #4c9b91; border-color: #7DD3C0; }"
+        )
+        self.btn_pin.clicked.connect(self._toggle_always_on_top)
+
+        # 切换到面板模式按钮
+        self.btn_switch_dock = QPushButton("📋 面板模式")
+        self.btn_switch_dock.setToolTip("切换到停靠面板模式")
+        self.btn_switch_dock.setStyleSheet(
+            "QPushButton { background: #0F172A; color: #F8FAFC; "
+            "border: 1px solid #4c9b91; padding: 6px 12px; border-radius: 4px; }"
+            "QPushButton:hover { background: #286b62; }"
+        )
+        self.btn_switch_dock.clicked.connect(self._on_switch_to_dock)
+
         self.btn_close = QPushButton("关闭")
-        
-        for b in (self.btn_fit, self.btn_actual):
+
+        for b in (self.btn_fit, self.btn_actual, self.btn_pin, self.btn_switch_dock):
             b.setStyleSheet(
                 "QPushButton { background: #0F172A; color: #F8FAFC; "
                 "border: 1px solid #4c9b91; padding: 6px 12px; border-radius: 4px; }"
                 "QPushButton:hover { background: #286b62; }"
             )
             btn_row.addWidget(b)
-        
+
         btn_row.addStretch(1)
-        
+
         self.btn_close.setStyleSheet(
             "QPushButton { background: #d45151; color: #fff; "
             "border: none; padding: 6px 16px; border-radius: 4px; }"
@@ -243,6 +271,25 @@ class ImageViewerDialog(QDialog):
 
         # 主窗口样式
         self.setStyleSheet("QDialog { background: #0B0E14; }")
+
+    def _toggle_always_on_top(self, checked):
+        """切换窗口置顶状态"""
+        self._is_always_on_top = checked
+        if checked:
+            self.setWindowFlags(
+                self.windowFlags() | Qt.WindowStaysOnTopHint
+            )
+            self.btn_pin.setText("📌 取消置顶")
+        else:
+            self.setWindowFlags(
+                self.windowFlags() & ~Qt.WindowStaysOnTopHint
+            )
+            self.btn_pin.setText("📌 置顶")
+        self.show()
+
+    def _on_switch_to_dock(self):
+        """切换到面板模式"""
+        self.switch_to_dock_mode.emit()
 
     def set_navigation_callbacks(self, previous_callback, next_callback):
         """设置仅供独立照片窗口使用的导航回调。"""
@@ -277,7 +324,7 @@ class ImageViewerDialog(QDialog):
     def load_image(self, image_path):
         """加载图片（复用窗口的核心方法）"""
         self.current_image_path = image_path
-        
+
         if not image_path or not os.path.isfile(image_path):
             self._show_placeholder(f"图片不存在:\n{image_path or '(空路径)'}")
             return

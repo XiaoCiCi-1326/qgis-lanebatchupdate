@@ -34,6 +34,7 @@ from .boundary_length_controller import BoundaryLengthController
 from .error_results_controller import ErrorResultsController
 from .raster_pyramid_controller import RasterPyramidController
 from .raster_compress_controller import RasterCompressController
+from .raster_tile_loader_controller import RasterTileLoaderController
 from .js2jd_convert_controller import Js2jdConvertController
 from .filename_search_controller import FileNameSearchController
 from .shpchecker_controller import ShpCheckerController
@@ -80,6 +81,7 @@ class LaneBatchUpdateTool:
         self.boundary_length = BoundaryLengthController(iface, self.plugin_dir, self.error_results)
         self.raster_pyramid = RasterPyramidController(iface, self.plugin_dir)
         self.raster_compress = RasterCompressController(iface, self.plugin_dir)
+        self.raster_tile_loader = RasterTileLoaderController(iface, self.plugin_dir)
         self.js2jd_convert = Js2jdConvertController(iface, self.plugin_dir, self.log)
         self.filename_search = FileNameSearchController(iface, self.plugin_dir)
         self.shpchecker = ShpCheckerController(iface, self.plugin_dir, self.error_results, self.log)
@@ -149,6 +151,7 @@ class LaneBatchUpdateTool:
         self.boundary_length.initGui(self.actions, register_action=False)
         self.raster_pyramid.initGui(self.actions)
         self.raster_compress.initGui(self.actions)
+        self.raster_tile_loader.initGui(self.actions)
         self.js2jd_convert.initGui(self.actions)
         self.filename_search.initGui(self.actions)
         self.jdchecker.initGui(self.actions)
@@ -271,6 +274,7 @@ class LaneBatchUpdateTool:
             "辅助工具": [
                 ("inertial_follow", "惯导地图跟随", "icon_inertial_follow.svg"),
                 ("raster_pyramid", "TIF 生成金字塔", "icon_raster_pyramid.svg"),
+                ("raster_tile_loader", "加载 MAP_TILE 栅格", "icon_raster_tile_loader.svg"),
                 (self.MODE_JS2JD_CONVERT, "Js2jd 转换", "icon_js2jd_convert.svg"),
                 ("filename_search", "搜索文件名", "icon_filename_search.svg"),
                 ("filename_copy_results", "复制搜索结果", "icon_filename_copy.svg"),
@@ -324,6 +328,8 @@ class LaneBatchUpdateTool:
             self.inertial_follow.toggle()
         elif item_id == "raster_pyramid":
             self.raster_pyramid.run()
+        elif item_id == "raster_tile_loader":
+            self.raster_tile_loader.run()
         elif item_id == "map_tile_snap":
             self.map_tile_snap.snap_selected()
         elif item_id == "lane_stopline_snap":
@@ -405,6 +411,7 @@ class LaneBatchUpdateTool:
         self.error_results.unload()
         self.raster_pyramid.unload()
         self.raster_compress.unload()
+        self.raster_tile_loader.unload()
         self.js2jd_convert.unload()
         self.shpchecker.unload()
         self.jdchecker.unload()

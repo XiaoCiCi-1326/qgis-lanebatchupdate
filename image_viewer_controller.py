@@ -17,11 +17,12 @@ from qgis.PyQt.QtCore import QObject, QSettings, Qt
 from qgis.PyQt.QtGui import QIcon, QKeySequence, QPixmap
 from qgis.PyQt.QtWidgets import (
     QAction, QMessageBox, QToolButton, QMenu, QShortcut,
-    QDockWidget, QLabel, QVBoxLayout, QWidget, QPushButton, QHBoxLayout
+    QDockWidget, QLabel, QVBoxLayout, QWidget, QPushButton, QHBoxLayout,
+    QSizePolicy
 )
 from qgis.core import Qgis, QgsProject, QgsVectorLayer
 
-from .image_viewer_dialog import ImageViewerDialog
+from .image_viewer_dialog import ImageViewerDialog, _ImageCanvas
 from .image_viewer_pairing_dialog import ImageViewerPairingDialog
 
 
@@ -42,7 +43,7 @@ class ImageViewerController(QObject):
         # 工具栏按钮（只有一个下拉按钮）
         self.toolbar_button = None
         self.toolbar_action = None
-        
+
         # 子菜单 actions
         self.pairing_action = None
         self.view_action = None
@@ -119,7 +120,7 @@ class ImageViewerController(QObject):
         self.dock_action.triggered.connect(self._toggle_dock_mode)
 
         # 添加到菜单
-        for act in [self.pairing_action, self.view_action, self.prev_action, 
+        for act in [self.pairing_action, self.view_action, self.prev_action,
                     self.next_action, self.dock_action]:
             self.iface.addPluginToVectorMenu("车道处理工具", act)
             actions_master.append(act)
@@ -373,6 +374,7 @@ class ImageViewerController(QObject):
         if not self.viewer_dialog:
             self.viewer_dialog = ImageViewerDialog(None)  # 独立窗口
             self.viewer_dialog.set_navigation_callbacks(self.show_prev, self.show_next)
+            self.viewer_dialog.switch_to_dock_mode.connect(self._switch_to_dock_mode)
 
         was_visible = self.viewer_dialog.isVisible()
         self.viewer_dialog.load_image(img_path)
@@ -382,21 +384,23 @@ class ImageViewerController(QObject):
             self.viewer_dialog.raise_()
             self.viewer_dialog.activateWindow()
 
+    def _switch_to_dock_mode(self):
+        """从独立窗口切换到面板模式"""
+        if self.display_mode != 'dock':
+            self._toggle_dock_mode()
+
     def _show_in_dock(self, img_path):
-        """停靠面板显示"""
+        """停靠面板显示（支持滚轮缩放和拖动）"""
         if not self.dock_widget:
             self._create_dock_widget()
 
         pixmap = QPixmap(img_path)
         if not pixmap.isNull():
             self.dock_widget.show()
-            # 停靠面板显示后尺寸已确定，再按实际可用空间缩放当前照片。
-            scaled = pixmap.scaled(
-                self.dock_label.size(),
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation
-            )
-            self.dock_label.setPixmap(scaled)
+            # 使用 ImageCanvas 显示图片，并根据面板尺寸自动适应
+            self.dock_canvas.set_pixmap(pixmap, 1.0)
+            # 适应窗口大小
+            self.dock_canvas.fit_to_window()
             self.dock_widget.show()
 
     def _create_dock_widget(self):
@@ -409,19 +413,65 @@ class ImageViewerController(QObject):
         layout = QVBoxLayout(content)
         layout.setContentsMargins(4, 4, 4, 4)
 
-        # 图片显示区域
-        self.dock_label = QLabel()
-        self.dock_label.setAlignment(Qt.AlignCenter)
-        self.dock_label.setMinimumSize(200, 200)
-        self.dock_label.setScaledContents(False)
-        self.dock_label.setStyleSheet("QLabel { background: #1E293B; border: 1px solid #4c9b91; }")
-        layout.addWidget(self.dock_label, 1)
+        # 图片显示区域 - 使用 ImageCanvas 支持滚轮缩放和拖动
+        self.dock_canvas = _ImageCanvas()
+        self.dock_canvas.setMinimumSize(200, 200)
+        self.dock_canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.dock_canvas.setStyleSheet("background: #1E293B; border: 1px solid #4c9b91;")
+        layout.addWidget(self.dock_canvas, 1)
+
+        # 缩放信息和切换按钮行
+        info_row = QHBoxLayout()
+        self.dock_scale_label = QLabel("100%")
+        self.dock_scale_label.setMinimumWidth(50)
+        self.dock_scale_label.setAlignment(Qt.AlignCenter)
+        self.dock_scale_label.setStyleSheet(
+            "color: #F8FAFC; background: #0F172A; padding: 4px; border-radius: 4px;"
+        )
+        self.dock_canvas.scale_changed.connect(
+            lambda scale: self.dock_scale_label.setText(f"{int(scale * 100)}%")
+        )
+        info_row.addWidget(self.dock_scale_label)
+
+        self.dock_btn_fit = QPushButton("适应窗口")
+        self.dock_btn_fit.setStyleSheet(
+            "QPushButton { background: #0F172A; color: #F8FAFC; "
+            "border: 1px solid #4c9b91; padding: 4px 8px; border-radius: 4px; }"
+            "QPushButton:hover { background: #286b62; }"
+        )
+        self.dock_btn_fit.clicked.connect(self._on_dock_fit_clicked)
+        info_row.addWidget(self.dock_btn_fit)
+
+        info_row.addStretch(1)
+
+        # 切换到独立窗口按钮
+        self.dock_btn_switch_window = QPushButton("🪟 独立窗口")
+        self.dock_btn_switch_window.setToolTip("切换到独立窗口模式")
+        self.dock_btn_switch_window.setStyleSheet(
+            "QPushButton { background: #0F172A; color: #F8FAFC; "
+            "border: 1px solid #4c9b91; padding: 4px 8px; border-radius: 4px; }"
+            "QPushButton:hover { background: #286b62; }"
+        )
+        self.dock_btn_switch_window.clicked.connect(self._switch_to_window_mode)
+        info_row.addWidget(self.dock_btn_switch_window)
+
+        layout.addLayout(info_row)
 
         # 导航按钮
         btn_layout = QHBoxLayout()
         prev_btn = QPushButton("◀ 上一张 (,)")
+        prev_btn.setStyleSheet(
+            "QPushButton { background: #0F172A; color: #F8FAFC; "
+            "border: 1px solid #4c9b91; padding: 6px 12px; border-radius: 4px; }"
+            "QPushButton:hover { background: #286b62; }"
+        )
         prev_btn.clicked.connect(self.show_prev)
         next_btn = QPushButton("下一张 (.) ▶")
+        next_btn.setStyleSheet(
+            "QPushButton { background: #0F172A; color: #F8FAFC; "
+            "border: 1px solid #4c9b91; padding: 6px 12px; border-radius: 4px; }"
+            "QPushButton:hover { background: #286b62; }"
+        )
         next_btn.clicked.connect(self.show_next)
         btn_layout.addWidget(prev_btn)
         btn_layout.addWidget(next_btn)
@@ -429,6 +479,16 @@ class ImageViewerController(QObject):
 
         self.dock_widget.setWidget(content)
         self.iface.addDockWidget(Qt.RightDockWidgetArea, self.dock_widget)
+
+    def _on_dock_fit_clicked(self):
+        """面板适应窗口按钮"""
+        self.dock_canvas.fit_to_window()
+        self.dock_scale_label.setText(f"{int(self.dock_canvas._scale * 100)}%")
+
+    def _switch_to_window_mode(self):
+        """从面板模式切换到独立窗口模式"""
+        if self.display_mode != 'window':
+            self._toggle_dock_mode()
 
     def _set_dock_shortcuts_enabled(self, enabled):
         for shortcut in (self._dock_prev_shortcut, self._dock_next_shortcut):

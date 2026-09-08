@@ -57,6 +57,7 @@ RELEASE_FILES = (
     "icon_toggle_layout.svg",
     "icon_raster_pyramid.svg",
     "icon_raster_compress.svg",
+    "icon_raster_tile_loader.svg",
     "icon_js2jd_convert.svg",
     "icon_filename_search.svg",
     "icon_filename_copy.svg",
@@ -96,6 +97,7 @@ RELEASE_FILES = (
     "reconstruct_algorithms.json.example",
     "raster_pyramid_controller.py",
     "raster_compress_controller.py",
+    "raster_tile_loader_controller.py",
     "安装说明.txt",
 )
 
