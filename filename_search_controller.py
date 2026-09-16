@@ -44,17 +44,39 @@ class FileNameSearchController:
         self.iface.addPluginToVectorMenu("车道处理工具", self.copy_action)
 
     def add_toolbar_button(self):
+        """添加工具按钮到工具栏"""
+        # 如果按钮不存在，重新创建
+        if not self.toolbar_button:
+            self._create_toolbar_button()
+        
         toolbar = self.iface.vectorToolBar()
         if toolbar is not None and self.toolbar_button is not None:
             if self.toolbar_action is None or toolbar.widgetForAction(self.toolbar_action) is None:
                 self.toolbar_action = toolbar.addWidget(self.toolbar_button)
 
+    def _create_toolbar_button(self):
+        """创建工具栏按钮"""
+        parent = self.iface.mainWindow()
+        self.toolbar_button = QToolButton(parent)
+        self.toolbar_button.setDefaultAction(self.search_action)
+        menu = QMenu(self.toolbar_button)
+        menu.addAction(self.copy_action)
+        self.toolbar_button.setMenu(menu)
+        self.toolbar_button.setPopupMode(QToolButton.MenuButtonPopup)
+
     def remove_toolbar_button(self):
+        """从工具栏移除工具按钮"""
         toolbar = self.iface.vectorToolBar()
-        if toolbar is not None and self.toolbar_button is not None:
-            if self.toolbar_action is not None:
-                toolbar.removeAction(self.toolbar_action)
-                self.toolbar_action = None
+        if toolbar is not None and self.toolbar_action is not None:
+            toolbar.removeAction(self.toolbar_action)
+            self.toolbar_action = None
+        
+        if self.toolbar_button is not None:
+            try:
+                self.toolbar_button.deleteLater()
+            except (AttributeError, RuntimeError):
+                pass
+            self.toolbar_button = None
 
     def unload(self):
         self.remove_toolbar_button()

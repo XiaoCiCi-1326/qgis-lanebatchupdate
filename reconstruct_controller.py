@@ -46,7 +46,7 @@ class ReconstructController:
             elif action_type == "fill_rbdy":
                 action.triggered.connect(self.fill_empty_rbdy)
             else:
-                action.triggered.connect(lambda checked=False, m=mode: self.run(m))
+                action.triggered.connect(lambda *args, m=mode: self.run(m))
             # 不直接添加到工具栏，由主文件根据 toolbar_mode 控制
             # self.iface.addVectorToolBarIcon(action)
             self.iface.addPluginToVectorMenu("车道处理工具", action)

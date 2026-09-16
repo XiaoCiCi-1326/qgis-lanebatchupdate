@@ -104,8 +104,8 @@ class ExcelPreviewDialog(QDialog):
         self.btn_fixable = QPushButton("只选可修复")
         self.btn_all.clicked.connect(lambda: self._set_check_state(lambda i: True))
         self.btn_none.clicked.connect(lambda: self._set_check_state(lambda i: False))
-        self.btn_invert.clicked.connect(self._invert_check)
-        self.btn_fixable.clicked.connect(self._select_fixable)
+        self.btn_invert.clicked.connect(lambda *args: self._invert_check())
+        self.btn_fixable.clicked.connect(lambda *args: self._select_fixable())
         for b in (self.btn_all, self.btn_none, self.btn_invert, self.btn_fixable):
             top.addWidget(b)
 
@@ -149,9 +149,9 @@ class ExcelPreviewDialog(QDialog):
         bottom.addWidget(self.status_label)
         bottom.addStretch(1)
         self.btn_close = QPushButton("关闭")
-        self.btn_close.clicked.connect(self.reject)
+        self.btn_close.clicked.connect(lambda *args: self.reject())
         self.btn_apply = QPushButton("一键修复（仅勾选项）")
-        self.btn_apply.clicked.connect(self._on_apply_clicked)
+        self.btn_apply.clicked.connect(lambda *args: self._on_apply_clicked())
         self.btn_apply.setDefault(True)
         bottom.addWidget(self.btn_close)
         bottom.addWidget(self.btn_apply)

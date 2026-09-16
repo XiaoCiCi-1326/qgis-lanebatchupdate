@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#4FD1C5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <!-- 主节点 -->
+  <circle cx="12" cy="12" r="3" fill="#4FD1C5" stroke="#4FD1C5" stroke-width="2"/>
+  <!-- 箭头指向关联节点 -->
+  <path d="M12 9 L12 5" stroke="#38BDF8" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <path d="M12 15 L12 19" stroke="#38BDF8" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <path d="M9 12 L5 12" stroke="#38BDF8" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <path d="M15 12 L19 12" stroke="#38BDF8" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <!-- 目标节点 -->
+  <circle cx="12" cy="5" r="1.5" fill="none" stroke="#38BDF8"/>
+  <circle cx="12" cy="19" r="1.5" fill="none" stroke="#38BDF8"/>
+  <circle cx="5" cy="12" r="1.5" fill="none" stroke="#38BDF8"/>
+  <circle cx="19" cy="12" r="1.5" fill="none" stroke="#38BDF8"/>
+  <!-- 箭头定义 -->
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="5" refY="3" orient="auto">
+      <polygon points="0 0, 6 3, 0 6" fill="#38BDF8"/>
+    </marker>
+  </defs>
+  <!-- 赋值符号 -->
+  <text x="12" y="13" font-size="6" fill="#FFF" text-anchor="middle" font-weight="bold">ID</text>
+</svg>

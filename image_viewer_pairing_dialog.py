@@ -112,7 +112,7 @@ class _DirCell(QWidget):
         self.btn = QToolButton()
         self.btn.setText("...")
         self.btn.setToolTip("浏览选择目录")
-        self.btn.clicked.connect(self._browse)
+        self.btn.clicked.connect(lambda *args: self._browse())
         layout.addWidget(self.edit, 1)
         layout.addWidget(self.btn)
 
@@ -218,10 +218,10 @@ class ImageViewerPairingDialog(QDialog):
         layout.addWidget(self.table, 1)
 
         self.btn_add.clicked.connect(lambda: self._append_row())
-        self.btn_remove.clicked.connect(self._remove_selected_row)
+        self.btn_remove.clicked.connect(lambda *args: self._remove_selected_row())
         self.btn_up.clicked.connect(lambda: self._move_selected_row(-1))
         self.btn_down.clicked.connect(lambda: self._move_selected_row(1))
-        self.btn_scan.clicked.connect(self._auto_scan)
+        self.btn_scan.clicked.connect(lambda *args: self._auto_scan())
 
         # 底部按钮
         bottom = QHBoxLayout()
@@ -229,8 +229,8 @@ class ImageViewerPairingDialog(QDialog):
         self.btn_save = QPushButton("保存")
         self.btn_save.setDefault(True)
         self.btn_cancel = QPushButton("取消")
-        self.btn_save.clicked.connect(self._on_save_clicked)
-        self.btn_cancel.clicked.connect(self.reject)
+        self.btn_save.clicked.connect(lambda *args: self._on_save_clicked())
+        self.btn_cancel.clicked.connect(lambda *args: self.reject())
         bottom.addWidget(self.btn_save)
         bottom.addWidget(self.btn_cancel)
         layout.addLayout(bottom)

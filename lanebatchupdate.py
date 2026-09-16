@@ -42,11 +42,13 @@ from .jdchecker_controller import JdCheckerController
 from .layer_tools_controller import LayerToolsController
 from .feature_visibility_controller import FeatureVisibilityController
 from .image_viewer_controller import ImageViewerController
+from .feature_relation_controller import FeatureRelationController
 
 
 class LaneBatchUpdateTool:
     MODE_SPEED = "speed"
     MODE_SET_ROAD2 = "set_road2"
+    MODE_AUTO_SIMPLIFY = "auto_simplify"
     MODE_VIRTUAL = "virtual"
     MODE_MESH_MAP_TILE_ID = "mesh_map_tile_id"
     MODE_REMOVE_ALL = "remove_all"
@@ -92,6 +94,13 @@ class LaneBatchUpdateTool:
         self.layer_tools = LayerToolsController(iface, self.plugin_dir)
         self.feature_visibility = FeatureVisibilityController(iface, self.plugin_dir)
         self.image_viewer = ImageViewerController(iface, self.plugin_dir)
+        self.feature_relation = FeatureRelationController(iface)
+        
+        # 连接状态信号
+        self.feature_relation.status_changed.connect(
+            lambda msg: self.iface.messageBar().pushMessage("要素关联", msg, level=Qgis.Info, duration=3)
+        )
+        
         self.error_results.configure_checkers(
             self.run_check_right_straight_overlap,
             self.boundary_length.apply_filter,
@@ -138,7 +147,7 @@ class LaneBatchUpdateTool:
         for mode, label, icon_name in buttons:
             icon_path = os.path.join(self.plugin_dir, icon_name)
             action = QAction(QIcon(icon_path), label, self.iface.mainWindow())
-            action.triggered.connect(lambda checked=False, m=mode: self.run(mode=m))
+            action.triggered.connect(lambda *args, m=mode: self.run(mode=m))
             self.iface.addPluginToVectorMenu("车道处理工具", action)
             self.actions.append(action)
         
@@ -162,6 +171,7 @@ class LaneBatchUpdateTool:
         self.layer_tools.initGui(self.actions)
         self.feature_visibility.initGui(self.actions)
         self.image_viewer.initGui(self.actions)
+        self.feature_relation.initGui(self.actions)
         self._create_attribute_fill_button()
 
         # 根据保存的模式初始化工具栏布局
@@ -171,10 +181,18 @@ class LaneBatchUpdateTool:
             self._apply_flat_mode()
         else:
             print(f"[LaneBatchUpdate] 应用菜单模式，使用分类菜单")
+            # 确保 filename_search 按钮不会在菜单模式下显示
+            self.filename_search.remove_toolbar_button()
             self._create_categorized_menu()
 
         # 照片查看器始终显示为一个带下拉菜单的按钮。
         self.image_viewer.add_toolbar_button()
+        
+        # 关联功能始终显示为一个带下拉菜单的按钮
+        self.feature_relation.add_toolbar_button()
+        
+        # shpchecker 始终显示为一个带下拉菜单的按钮
+        self.shpchecker.add_toolbar_button()
 
     def _toggle_toolbar_mode(self):
         if self.toolbar_mode == "flat":
@@ -200,6 +218,9 @@ class LaneBatchUpdateTool:
             ) or action.text() in ("限速刷值", "ROAD_TYPE=2", "转向个数刷值"):
                 # 刷值功能统一由一个下拉 QToolButton 承载。
                 continue
+            # feature_relation.assign_action 已包含在自定义下拉按钮中，不需要单独添加
+            if action is self.feature_relation.assign_action:
+                continue
             if action is self.filename_search.search_action:
                 self.filename_search.add_toolbar_button()
             else:
@@ -211,10 +232,14 @@ class LaneBatchUpdateTool:
         self.filename_search.remove_toolbar_button()
         self._remove_attribute_fill_button()
         self.image_viewer.remove_toolbar_button()
+        self.feature_relation.remove_toolbar_button()
+        self.shpchecker.remove_toolbar_button()
+        self.jdchecker.remove_toolbar_button()
+        
         for action in self.actions:
             try:
                 self.iface.removeVectorToolBarIcon(action)
-            except (AttributeError, RuntimeError):
+            except (AttributeError, RuntimeError, TypeError):
                 pass
 
         # 移除菜单按钮（如果存在）
@@ -232,20 +257,37 @@ class LaneBatchUpdateTool:
             self.menu_button = None
             self.main_menu = None
 
-        # 重新应用当前模式
+        # 按照指定顺序添加固定的下拉按钮
+        # 1. jdchecker 始终在第一个
+        self.jdchecker.add_toolbar_button()
+        # 2. attribute_fill 刷值功能始终在第二个
+        self._create_attribute_fill_button()
+        # 3. shpchecker 3.16扳手错质检
+        self.shpchecker.add_toolbar_button()
+        # 4. 关联功能
+        self.feature_relation.add_toolbar_button()
+        # 5. 图片查看器
+        self.image_viewer.add_toolbar_button()
+
+        # 重新应用当前模式（平铺或菜单）
         if self.toolbar_mode == "flat":
             self._apply_flat_mode()
         else:
+            # 确保 filename_search 按钮不会在菜单模式下显示
+            self.filename_search.remove_toolbar_button()
             self._create_categorized_menu()
-
-        # 图片查看器始终保持为一个独立的下拉按钮。
-        self.image_viewer.add_toolbar_button()
-        self._create_attribute_fill_button()
 
     def _create_attribute_fill_button(self):
         """创建统一承载四个覆盖式刷值操作的下拉按钮。"""
-        if self.attribute_fill_button is not None:
-            self._remove_attribute_fill_button()
+        # 如果按钮不存在，重新创建
+        if not self.attribute_fill_button:
+            self._build_attribute_fill_button()
+        
+        # 添加到工具栏
+        self._add_attribute_fill_button()
+
+    def _build_attribute_fill_button(self):
+        """构建刷值按钮（不添加到工具栏）"""
         parent = self.iface.mainWindow()
         self.attribute_fill_button = QToolButton(parent)
         self.attribute_fill_button.setDefaultAction(
@@ -257,35 +299,37 @@ class LaneBatchUpdateTool:
             (self.MODE_SET_ROAD2, "ROAD_TYPE=2（覆盖）", "icon_road2.png"),
             (self.MODE_VIRTUAL, "转向个数刷取（覆盖）", "icon_virtual.png"),
             (self.MODE_MESH_MAP_TILE_ID, "MESH=n / MAP_TILE.ID=n（覆盖）", "icon_mesh_map_tile_id.svg"),
+            (self.MODE_AUTO_SIMPLIFY, "自动抽稀", "icon_simplify.svg"),
         ):
             action = QAction(QIcon(os.path.join(self.plugin_dir, icon_name)), label, parent)
-            action.triggered.connect(lambda checked=False, m=mode: self.run(mode=m))
+            action.triggered.connect(lambda *args, m=mode: self.run(mode=m))
             menu.addAction(action)
         self.attribute_fill_button.setMenu(menu)
         self.attribute_fill_button.setPopupMode(QToolButton.InstantPopup)
-        self.attribute_fill_toolbar_action = None
-        self._add_attribute_fill_button()
 
     def _add_attribute_fill_button(self):
+        """添加刷值按钮到工具栏"""
         toolbar = self.iface.vectorToolBar()
         if toolbar is not None and self.attribute_fill_button is not None:
-            if self.attribute_fill_toolbar_action is None:
+            if self.attribute_fill_toolbar_action is None or toolbar.widgetForAction(self.attribute_fill_toolbar_action) is None:
                 self.attribute_fill_toolbar_action = toolbar.addWidget(self.attribute_fill_button)
 
     def _remove_attribute_fill_button(self):
+        """从工具栏移除刷值按钮"""
         toolbar = self.iface.vectorToolBar()
         if toolbar is not None and self.attribute_fill_toolbar_action is not None:
             try:
                 toolbar.removeAction(self.attribute_fill_toolbar_action)
             except (AttributeError, RuntimeError):
                 pass
+            self.attribute_fill_toolbar_action = None
+        
         if self.attribute_fill_button is not None:
             try:
                 self.attribute_fill_button.deleteLater()
             except (AttributeError, RuntimeError):
                 pass
             self.attribute_fill_button = None
-        self.attribute_fill_toolbar_action = None
 
     def _run_mesh_map_tile_id(self):
         """使用用户输入值 n 覆盖所有图层的 MESH 和 MAP_TILE.ID。"""
@@ -384,6 +428,7 @@ class LaneBatchUpdateTool:
                 ("layer_visibility", "图层显隐方案", "icon_layer_visibility.png"),
                 ("side_button_toggle", "侧键切换图层", "icon_side_button_toggle.svg"),
                 ("feature_visibility", "隐藏/显示选中要素", "icon_feature_hide.svg"),
+                ("relation_assign", "关联赋值", "icon_relation_assign.svg"),
                 (self.MODE_REFRESH_PROJECT, "刷新当前工程", "icon_refresh_project.svg"),
                 (self.MODE_REMOVE_ALL, "移除所有图层", "icon_remove_layers.svg"),
             ],
@@ -394,7 +439,7 @@ class LaneBatchUpdateTool:
             for item_id, label, icon_name in items:
                 icon_path = os.path.join(self.plugin_dir, icon_name)
                 action = QAction(QIcon(icon_path), label, self.iface.mainWindow())
-                action.triggered.connect(lambda checked=False, item=item_id: self._handle_menu_action(item))
+                action.triggered.connect(lambda *args, item=item_id: self._handle_menu_action(item))
                 category_menu.addAction(action)
 
         menu_action = QAction(QIcon(os.path.join(self.plugin_dir, "icon.png")), "车道处理工具", self.iface.mainWindow())
@@ -458,6 +503,12 @@ class LaneBatchUpdateTool:
             self.layer_tools.open_toggle_settings()
         elif item_id == "feature_visibility":
             self.feature_visibility.toggle_selected_features()
+        elif item_id == "relation_highlight":
+            self.feature_relation.toggle_highlight()
+        elif item_id == "relation_select":
+            self.feature_relation.select_related()
+        elif item_id == "relation_assign":
+            self.feature_relation.assign_relation()
         elif item_id == "shpchecker_316":
             self.shpchecker.run()
         elif item_id == "jdchecker_316":
@@ -529,6 +580,7 @@ class LaneBatchUpdateTool:
         self.layer_tools.unload()
         self.feature_visibility.unload()
         self.image_viewer.unload()
+        self.feature_relation.unload()
 
     def clear_overlap_highlights(self):
         for highlight in self.overlap_highlights:
@@ -2251,6 +2303,11 @@ class LaneBatchUpdateTool:
 
         if mode == self.MODE_JS2JD_CONVERT:
             self.js2jd_convert.run()
+            return
+        
+        if mode == self.MODE_AUTO_SIMPLIFY:
+            # 调用属性预设控制器的自动抽稀功能
+            self.attribute_preset._auto_simplify()
             return
 
         if mode == self.MODE_MESH_MAP_TILE_ID:

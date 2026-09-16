@@ -234,7 +234,7 @@ class ImageViewerDialog(QDialog):
             "QPushButton:hover { background: #286b62; }"
             "QPushButton:checked { background: #4c9b91; border-color: #7DD3C0; }"
         )
-        self.btn_pin.clicked.connect(self._toggle_always_on_top)
+        self.btn_pin.clicked.connect(lambda *args: self._toggle_always_on_top(args[0] if args else False))
 
         # 切换到面板模式按钮
         self.btn_switch_dock = QPushButton("📋 面板模式")
@@ -244,7 +244,7 @@ class ImageViewerDialog(QDialog):
             "border: 1px solid #4c9b91; padding: 6px 12px; border-radius: 4px; }"
             "QPushButton:hover { background: #286b62; }"
         )
-        self.btn_switch_dock.clicked.connect(self._on_switch_to_dock)
+        self.btn_switch_dock.clicked.connect(lambda *args: self._on_switch_to_dock())
 
         self.btn_follow_map = QPushButton("画布跟随")
         self.btn_follow_map.setToolTip("跟随当前照片要素移动地图，保持当前比例尺")
@@ -278,9 +278,9 @@ class ImageViewerDialog(QDialog):
         btn_row.addWidget(self.btn_close)
         layout.addLayout(btn_row)
 
-        self.btn_fit.clicked.connect(self._on_fit_clicked)
-        self.btn_actual.clicked.connect(self._on_actual_clicked)
-        self.btn_close.clicked.connect(self.close)
+        self.btn_fit.clicked.connect(lambda *args: self._on_fit_clicked())
+        self.btn_actual.clicked.connect(lambda *args: self._on_actual_clicked())
+        self.btn_close.clicked.connect(lambda *args: self.close())
 
         # 主窗口样式
         self.setStyleSheet("QDialog { background: #0B0E14; }")

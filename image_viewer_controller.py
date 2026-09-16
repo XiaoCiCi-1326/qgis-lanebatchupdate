@@ -138,9 +138,16 @@ class ImageViewerController(QObject):
 
     def add_toolbar_button(self):
         """添加到工具栏（单个下拉按钮）"""
-        if self.toolbar_button:
+        # 如果按钮不存在，重新创建
+        if not self.toolbar_button:
+            self._create_toolbar_button()
+        
+        # 如果按钮已经在工具栏中，不重复添加
+        if self.toolbar_action:
             return
 
+    def _create_toolbar_button(self):
+        """创建工具栏按钮"""
         parent = self.iface.mainWindow()
         toolbar = self.iface.vectorToolBar()
         if toolbar is None:
@@ -473,7 +480,7 @@ class ImageViewerController(QObject):
             "border: 1px solid #4c9b91; padding: 4px 8px; border-radius: 4px; }"
             "QPushButton:hover { background: #286b62; }"
         )
-        self.dock_btn_fit.clicked.connect(self._on_dock_fit_clicked)
+        self.dock_btn_fit.clicked.connect(lambda *args: self._on_dock_fit_clicked())
         info_row.addWidget(self.dock_btn_fit)
 
         self.dock_btn_follow_map = QPushButton("画布跟随")
@@ -499,7 +506,7 @@ class ImageViewerController(QObject):
             "border: 1px solid #4c9b91; padding: 4px 8px; border-radius: 4px; }"
             "QPushButton:hover { background: #286b62; }"
         )
-        self.dock_btn_switch_window.clicked.connect(self._switch_to_window_mode)
+        self.dock_btn_switch_window.clicked.connect(lambda *args: self._switch_to_window_mode())
         info_row.addWidget(self.dock_btn_switch_window)
 
         layout.addLayout(info_row)
@@ -512,14 +519,14 @@ class ImageViewerController(QObject):
             "border: 1px solid #4c9b91; padding: 6px 12px; border-radius: 4px; }"
             "QPushButton:hover { background: #286b62; }"
         )
-        prev_btn.clicked.connect(self.show_prev)
+        prev_btn.clicked.connect(lambda *args: self.show_prev())
         next_btn = QPushButton("下一张 (.) ▶")
         next_btn.setStyleSheet(
             "QPushButton { background: #0F172A; color: #F8FAFC; "
             "border: 1px solid #4c9b91; padding: 6px 12px; border-radius: 4px; }"
             "QPushButton:hover { background: #286b62; }"
         )
-        next_btn.clicked.connect(self.show_next)
+        next_btn.clicked.connect(lambda *args: self.show_next())
         btn_layout.addWidget(prev_btn)
         btn_layout.addWidget(next_btn)
         layout.addLayout(btn_layout)

@@ -89,13 +89,20 @@ class JdCheckerController:
         self.action.triggered.connect(self.run)
         self.iface.addPluginToVectorMenu("车道处理工具", self.action)
         actions_master.append(self.action)
+    
+    def add_toolbar_button(self):
+        """添加工具按钮到工具栏（jdchecker 目前没有工具栏按钮，保留空实现以兼容）"""
+        pass
+    
+    def remove_toolbar_button(self):
+        """从工具栏移除工具按钮（jdchecker 目前没有工具栏按钮，保留空实现以兼容）"""
+        pass
 
     def unload(self):
         self._stop_process()
         self._cleanup_run_ui()
         if self.action is not None:
             try:
-                self.iface.removeVectorToolBarIcon(self.action)
                 self.iface.removePluginMenu("车道处理工具", self.action)
             except (AttributeError, RuntimeError):
                 pass

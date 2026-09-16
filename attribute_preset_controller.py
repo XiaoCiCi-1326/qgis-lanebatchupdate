@@ -486,7 +486,7 @@ class NewFeatureDialog(QDialog):
         for name in names:
             button = PresetButton(name, self.preset_panel)
             button.setMinimumWidth(92)
-            button.clicked.connect(lambda checked=False, n=name: self.apply_preset(n))
+            button.clicked.connect(lambda *args, n=name: self.apply_preset(n))
             button.doubleClicked.connect(lambda n=name: self._apply_preset_and_accept(n))
             self.preset_buttons.append(button)
         if not names:
@@ -768,7 +768,7 @@ class AttributePresetDialog(QDialog):
         self.layer_combo.currentIndexChanged.connect(self._layer_changed)
         layer_row.addWidget(self.layer_combo, 1)
         refresh = QPushButton("刷新")
-        refresh.clicked.connect(self._reload_layers)
+        refresh.clicked.connect(lambda *args: self._reload_layers())
         layer_row.addWidget(refresh)
         layout.addLayout(layer_row)
 
@@ -778,12 +778,21 @@ class AttributePresetDialog(QDialog):
         self.preset_combo.currentIndexChanged.connect(self._preset_changed)
         preset_row.addWidget(self.preset_combo, 1)
         new_button = QPushButton("新建")
-        new_button.clicked.connect(self._new_preset)
+        new_button.clicked.connect(lambda *args: self._new_preset())
         self.delete_button = QPushButton("删除")
-        self.delete_button.clicked.connect(self._delete_preset)
+        self.delete_button.clicked.connect(lambda *args: self._delete_preset())
         preset_row.addWidget(new_button)
         preset_row.addWidget(self.delete_button)
         layout.addLayout(preset_row)
+
+        # 自动抽稀按钮
+        simplify_row = QHBoxLayout()
+        simplify_row.addStretch(1)
+        self.simplify_button = QPushButton("自动抽稀")
+        self.simplify_button.setToolTip("将LANE图层中TURN_TYPE=0或1的要素进行简化抽稀")
+        self.simplify_button.clicked.connect(lambda *args: self._auto_simplify())
+        simplify_row.addWidget(self.simplify_button)
+        layout.addLayout(simplify_row)
 
         self.preset_hint_label = QLabel("常用预设（单击加载，双击直接应用，可拖动排序）")
         self.preset_hint_label.setWordWrap(False)
@@ -867,10 +876,10 @@ class AttributePresetDialog(QDialog):
         self.close_button = QPushButton("关闭")
         for button in (self.save_button, self.brush_button, self.apply_button, self.close_button):
             button.setAutoDefault(False)
-        self.save_button.clicked.connect(self._save_preset)
-        self.brush_button.clicked.connect(self._start_brush)
-        self.apply_button.clicked.connect(self._apply_preset)
-        self.close_button.clicked.connect(self.reject)
+        self.save_button.clicked.connect(lambda *args: self._save_preset())
+        self.brush_button.clicked.connect(lambda *args: self._start_brush())
+        self.apply_button.clicked.connect(lambda *args: self._apply_preset())
+        self.close_button.clicked.connect(lambda *args: self.reject())
         button_row.addWidget(self.save_button)
         button_row.addWidget(self.apply_button)
         button_row.addWidget(self.brush_button)
@@ -944,7 +953,7 @@ class AttributePresetDialog(QDialog):
             button.setMinimumWidth(96)
             button.setMinimumHeight(28)
             button.setToolTip("单击加载预设；双击直接应用；拖动调整位置")
-            button.clicked.connect(lambda checked=False, n=name: self._select_preset(n))
+            button.clicked.connect(lambda *args, n=name: self._select_preset(n))
             button.doubleClicked.connect(lambda n=name: self._apply_named_preset(n))
             self.preset_panel.buttons.append(button)
         self._layout_preset_buttons()
@@ -1453,7 +1462,7 @@ class AttributePresetController:
             button = PresetButton(name, group)
             button.setMinimumWidth(92)
             button.setToolTip("单击加载；双击直接应用")
-            button.clicked.connect(lambda checked=False, n=name: apply_preset(n))
+            button.clicked.connect(lambda *args, n=name: apply_preset(n))
             button.doubleClicked.connect(lambda n=name: apply_preset(n))
             row.addWidget(button)
             buttons.append(button)
@@ -1910,3 +1919,105 @@ class AttributePresetController:
                 raise RuntimeError("所选图层中没有选中要素。")
             raise RuntimeError("所选图层中没有可修改的要素。")
         return total
+
+    def _auto_simplify(self):
+        """自动抽稀：简化LANE图层中TURN_TYPE=0或1的要素"""
+        from qgis.core import NULL
+        
+        # 查找LANE图层
+        lane_layer = None
+        for layer in self.vector_layers():
+            if layer.name().upper() == 'LANE':
+                lane_layer = layer
+                break
+        
+        if not lane_layer:
+            QMessageBox.warning(None, "自动抽稀", "未找到名为 LANE 的图层！")
+            return
+        
+        # 检查是否有TURN_TYPE字段
+        turn_type_field = None
+        for field in lane_layer.fields():
+            if field.name().upper() == 'TURN_TYPE':
+                turn_type_field = field.name()
+                break
+        
+        if not turn_type_field:
+            QMessageBox.warning(None, "自动抽稀", "LANE 图层中没有 TURN_TYPE 字段！")
+            return
+        
+        # 获取TURN_TYPE=0或1的要素
+        features_to_simplify = []
+        for feature in lane_layer.getFeatures():
+            turn_type = feature[turn_type_field]
+            # 处理NULL和空值
+            if turn_type is NULL or turn_type is None or str(turn_type).strip() == '':
+                continue
+            try:
+                if int(turn_type) in (0, 1):
+                    features_to_simplify.append(feature.id())
+            except (ValueError, TypeError):
+                continue
+        
+        if not features_to_simplify:
+            QMessageBox.information(None, "自动抽稀", "没有找到 TURN_TYPE=0 或 TURN_TYPE=1 的要素！")
+            return
+        
+        # 确认操作
+        reply = QMessageBox.question(
+            None, "自动抽稀",
+            f"将对 {len(features_to_simplify)} 个要素进行简化抽稀\n（容差：0.05米）\n是否继续？",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            return
+        
+        # 开始编辑并简化
+        lane_layer.startEditing()
+        lane_layer.beginEditCommand("自动抽稀")  # 开始一个可撤销的编辑命令
+        simplified_count = 0
+        tolerance = 0.05
+        
+        try:
+            for feature_id in features_to_simplify:
+                feature = lane_layer.getFeature(feature_id)
+                geometry = feature.geometry()
+                
+                if geometry and not geometry.isNull():
+                    # 使用simplify按距离简化
+                    simplified_geom = geometry.simplify(tolerance)
+                    if simplified_geom and not simplified_geom.isNull():
+                        # 计算简化前后的点数
+                        try:
+                            if geometry.isMultipart():
+                                old_points = sum(len(line) for line in geometry.asMultiPolyline())
+                                new_points = sum(len(line) for line in simplified_geom.asMultiPolyline())
+                            else:
+                                old_points = len(geometry.asPolyline())
+                                new_points = len(simplified_geom.asPolyline())
+                        except:
+                            old_points = 0
+                            new_points = 0
+                        
+                        if new_points < old_points or (old_points == 0 and new_points == 0):
+                            lane_layer.changeGeometry(feature_id, simplified_geom)
+                            simplified_count += 1
+            
+            # 不自动提交，保留撤销功能
+            # lane_layer.commitChanges()
+            lane_layer.endEditCommand()
+            
+            self.iface.messageBar().pushMessage(
+                "自动抽稀",
+                f"成功简化 {simplified_count}/{len(features_to_simplify)} 个要素（可按 Ctrl+Z 撤销）",
+                level=Qgis.Success,
+                duration=5
+            )
+        except Exception as e:
+            lane_layer.destroyEditCommand()
+            self.iface.messageBar().pushMessage(
+                "自动抽稀失败",
+                f"简化过程中出错：{str(e)}",
+                level=Qgis.Critical,
+                duration=5
+            )

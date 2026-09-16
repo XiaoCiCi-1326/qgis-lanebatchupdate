@@ -1,0 +1,28 @@
+﻿<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <!-- 原始复杂路径 (虚线) -->
+  <path d="M 3 12 Q 5 8, 7 12 T 11 12 Q 13 16, 15 12 T 19 12 L 21 12" 
+        stroke="#94a3b8" 
+        stroke-width="1.5" 
+        stroke-dasharray="2,2" 
+        fill="none" 
+        opacity="0.5"/>
+  
+  <!-- 简化后路径 (实线) -->
+  <path d="M 3 12 L 7 12 L 11 12 L 15 12 L 21 12" 
+        stroke="#22d3ee" 
+        stroke-width="2.5" 
+        fill="none"/>
+  
+  <!-- 关键点标记 -->
+  <circle cx="3" cy="12" r="2" fill="#22d3ee"/>
+  <circle cx="7" cy="12" r="2" fill="#22d3ee"/>
+  <circle cx="11" cy="12" r="2" fill="#22d3ee"/>
+  <circle cx="15" cy="12" r="2" fill="#22d3ee"/>
+  <circle cx="21" cy="12" r="2" fill="#22d3ee"/>
+  
+  <!-- 简化箭头指示 -->
+  <path d="M 18 6 L 20 8 L 18 10" 
+        stroke="#f59e0b" 
+        stroke-width="2" 
+        fill="none"/>
+</svg>

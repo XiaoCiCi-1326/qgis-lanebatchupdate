@@ -165,12 +165,14 @@ class LayerToolsController:
         return sorted(layer.name() for layer in QgsProject.instance().mapLayers().values())
 
     def _create_shortcut_action(self, label, shortcut, callback, collection):
+        print(f"[LayerSwitch] Creating shortcut action: label='{label}', shortcut='{shortcut}'")  # 调试日志
         action = QAction(label, self.iface.mainWindow())
         action.setShortcut(QKeySequence(shortcut))
         action.setShortcutContext(Qt.ApplicationShortcut)
         action.triggered.connect(callback)
         self.iface.mainWindow().addAction(action)
         collection.append(action)
+        print(f"[LayerSwitch] Action created, shortcut key: {action.shortcut().toString()}")  # 调试日志
 
     def _clear_shortcuts(self, collection):
         window = self.iface.mainWindow()
@@ -185,20 +187,24 @@ class LayerToolsController:
 
     def _load_switch_shortcuts(self):
         self._clear_switch_shortcuts()
-        for layer_name, binding in self._read_json("LayerSwitch/bindings").items():
+        bindings = self._read_json("LayerSwitch/bindings")
+        print(f"[LayerSwitch] Loading bindings: {bindings}")  # 调试日志
+        for layer_name, binding in bindings.items():
             if not binding:
                 continue
             # 兼容旧格式（纯字符串）和新格式（字典）
             if isinstance(binding, dict):
                 bind_type = binding.get("type")
                 bind_value = binding.get("value")
+                print(f"[LayerSwitch] Layer '{layer_name}': type={bind_type}, value={bind_value}")  # 调试日志
                 if bind_type == "keyboard":
                     self._create_shortcut_action(
                         u"切换到: " + layer_name,
                         bind_value,
-                        lambda checked=False, name=layer_name: self.switch_to_layer(name),
+                        lambda *args, name=layer_name: self.switch_to_layer(name),
                         self.switch_actions,
                     )
+                    print(f"[LayerSwitch] Created keyboard shortcut: {bind_value} -> {layer_name}")  # 调试日志
                 elif bind_type == "mouse":
                     button_code = int(bind_value)
                     mouse_filter = _CanvasEventFilter(
@@ -207,12 +213,14 @@ class LayerToolsController:
                     )
                     self.canvas.viewport().installEventFilter(mouse_filter)
                     self.switch_mouse_filters.append(mouse_filter)
+                    print(f"[LayerSwitch] Created mouse shortcut: button {button_code} -> {layer_name}")  # 调试日志
             else:
                 # 旧格式兼容
+                print(f"[LayerSwitch] Layer '{layer_name}': old format={binding}")  # 调试日志
                 self._create_shortcut_action(
                     u"切换到: " + layer_name,
                     binding,
-                    lambda checked=False, name=layer_name: self.switch_to_layer(name),
+                    lambda *args, name=layer_name: self.switch_to_layer(name),
                     self.switch_actions,
                 )
 
@@ -227,6 +235,7 @@ class LayerToolsController:
         self.switch_mouse_filters.clear()
 
     def switch_to_layer(self, layer_name):
+        print(f"[LayerSwitch] Switching to layer: {layer_name}")  # 调试日志
         for layer in QgsProject.instance().mapLayers().values():
             if layer.name() == layer_name:
                 self.iface.setActiveLayer(layer)
@@ -271,42 +280,48 @@ class LayerToolsController:
             capture_label.setStyleSheet("QLabel { font-size: 12pt; padding: 20px; }")
             capture_layout.addWidget(capture_label)
             
-            def on_key_press(event):
-                if event.type() == QEvent.KeyPress:
-                    key_seq = QKeySequence(event.key() | int(event.modifiers())).toString()
-                    if key_seq and key_seq != "Esc":
-                        current_binding["type"] = "keyboard"
-                        current_binding["value"] = key_seq
-                        key_display.setText(u"键盘: " + key_seq)
-                        capture_dialog.accept()
-                    elif key_seq == "Esc":
-                        capture_dialog.reject()
-                return False
+            # 创建一个自定义的事件过滤器类
+            class KeyMouseFilter(QObject):
+                def eventFilter(self, obj, event):
+                    if event.type() == QEvent.KeyPress:
+                        key = event.key()
+                        modifiers = int(event.modifiers())
+                        
+                        # 忽略单独的修饰键按下（Ctrl、Alt、Shift、Meta）
+                        modifier_keys = [Qt.Key_Control, Qt.Key_Alt, Qt.Key_Shift, Qt.Key_Meta,
+                                       Qt.Key_AltGr, Qt.Key_Super_L, Qt.Key_Super_R]
+                        if key in modifier_keys:
+                            return False
+                        
+                        # 生成快捷键序列
+                        key_seq = QKeySequence(key | modifiers).toString()
+                        
+                        if key_seq and key_seq != "Esc":
+                            current_binding["type"] = "keyboard"
+                            current_binding["value"] = key_seq
+                            key_display.setText(u"键盘: " + key_seq)
+                            capture_dialog.accept()
+                            return True
+                        elif key_seq == "Esc":
+                            capture_dialog.reject()
+                            return True
+                    elif event.type() == QEvent.MouseButtonPress:
+                        button_code = int(event.button())
+                        button_name = next((label for code, label in MOUSE_BUTTONS if code == button_code), None)
+                        if button_name:
+                            current_binding["type"] = "mouse"
+                            current_binding["value"] = str(button_code)
+                            key_display.setText(button_name)
+                            capture_dialog.accept()
+                            return True
+                    return False
             
-            def on_mouse_press(event):
-                if event.type() == QEvent.MouseButtonPress:
-                    button_code = int(event.button())
-                    button_name = next((label for code, label in MOUSE_BUTTONS if code == button_code), None)
-                    if button_name:
-                        current_binding["type"] = "mouse"
-                        current_binding["value"] = str(button_code)
-                        key_display.setText(button_name)
-                        capture_dialog.accept()
-                return True
-            
-            capture_dialog.keyPressEvent = on_key_press
-            
-            mouse_filter = QObject()
-            def mouse_event_filter(obj, event):
-                if event.type() == QEvent.MouseButtonPress:
-                    return on_mouse_press(event)
-                return False
-            mouse_filter.eventFilter = mouse_event_filter
-            capture_dialog.installEventFilter(mouse_filter)
+            event_filter = KeyMouseFilter(capture_dialog)
+            capture_dialog.installEventFilter(event_filter)
             
             capture_dialog.exec_()
         
-        key_capture_btn.clicked.connect(capture_key)
+        key_capture_btn.clicked.connect(lambda *args: capture_key())
         
         auto_edit = QCheckBox(u"切换图层时自动开启编辑模式")
         auto_edit.setChecked(QSettings().value("LayerSwitch/autoEdit", False, type=bool))
@@ -338,7 +353,7 @@ class LayerToolsController:
                     display_text = u"键盘: " + binding
                 table.setItem(row, 1, QTableWidgetItem(display_text))
                 delete_button = QPushButton(u"删除")
-                delete_button.clicked.connect(lambda checked=False, n=name: (bindings.pop(n, None), refresh_table()))
+                delete_button.clicked.connect(lambda *args, n=name: (bindings.pop(n, None), refresh_table()))
                 table.setCellWidget(row, 2, delete_button)
 
         def add_binding():
@@ -352,7 +367,7 @@ class LayerToolsController:
             current_binding["value"] = ""
             refresh_table()
 
-        add_button.clicked.connect(add_binding)
+        add_button.clicked.connect(lambda *args: add_binding())
         refresh_table()
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.accepted.connect(dialog.accept)
@@ -410,7 +425,7 @@ class LayerToolsController:
                 self._create_shortcut_action(
                     u"显隐方案: " + name,
                     shortcut,
-                    lambda checked=False, scheme_name=name: self.apply_visibility_scheme(scheme_name),
+                    lambda *args, scheme_name=name: self.apply_visibility_scheme(scheme_name),
                     self.vis_actions,
                 )
 
@@ -463,9 +478,9 @@ class LayerToolsController:
                 cell_layout = QHBoxLayout(cell)
                 cell_layout.setContentsMargins(2, 2, 2, 2)
                 apply_button = QPushButton(u"应用")
-                apply_button.clicked.connect(lambda checked=False, n=name: self.apply_visibility_scheme(n))
+                apply_button.clicked.connect(lambda *args, n=name: self.apply_visibility_scheme(n))
                 delete_button = QPushButton(u"删除")
-                delete_button.clicked.connect(lambda checked=False, n=name: (schemes.pop(n, None), refresh_table()))
+                delete_button.clicked.connect(lambda *args, n=name: (schemes.pop(n, None), refresh_table()))
                 cell_layout.addWidget(apply_button)
                 cell_layout.addWidget(delete_button)
                 table.setCellWidget(row, 3, cell)
@@ -487,7 +502,7 @@ class LayerToolsController:
                 layer_list.item(i).setCheckState(Qt.Unchecked)
             refresh_table()
 
-        add_button.clicked.connect(save_scheme)
+        add_button.clicked.connect(lambda *args: save_scheme())
         refresh_table()
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.accepted.connect(dialog.accept)

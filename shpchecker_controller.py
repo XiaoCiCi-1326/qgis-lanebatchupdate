@@ -47,6 +47,8 @@ class ShpCheckerController:
         self.log = log_fn or print
         self.action = None
         self.toolbar_button = None
+        self.toolbar_action = None
+        self.related_action = None  # 保存 related_action 用于重建按钮
         self._checker = None
         self._input_dir = ""
         self._loaded_layers = []
@@ -71,30 +73,72 @@ class ShpCheckerController:
         self.action.triggered.connect(self.run)
         self.iface.addPluginToVectorMenu("车道处理工具", self.action)
         actions_master.append(self.action)
+        
+        # 保存 related_action 用于重建按钮
+        self.related_action = related_action
+        
+        # 创建工具栏按钮
+        self._create_toolbar_button()
+        
+        # 保存工具栏 action 引用
+        self.toolbar_action = None
+
+    def _create_toolbar_button(self):
+        """创建工具栏按钮"""
         class _InputButton(QToolButton):
             def mouseDoubleClickEvent(button_self, event):
                 self.configure_input_dir()
                 event.accept()
+        
         self.toolbar_button = _InputButton(self.iface.mainWindow())
         self.toolbar_button.setDefaultAction(self.action)
         self.toolbar_button.setToolTip("单击运行 3.16 扳手错；右侧箭头运行自动3.16质检错；双击配置转换数据目录")
-        if related_action is not None:
+        
+        if self.related_action is not None:
             menu = QMenu(self.toolbar_button)
-            menu.addAction(related_action)
+            menu.addAction(self.related_action)
             self.toolbar_button.setMenu(menu)
             self.toolbar_button.setPopupMode(QToolButton.MenuButtonPopup)
+
+    def add_toolbar_button(self):
+        """添加工具按钮到工具栏"""
+        # 如果按钮不存在，重新创建
+        if not self.toolbar_button:
+            self._create_toolbar_button()
+        
+        if self.toolbar_button and not self.toolbar_action:
+            toolbar = self.iface.vectorToolBar()
+            if toolbar:
+                self.toolbar_action = toolbar.addWidget(self.toolbar_button)
+    
+    def remove_toolbar_button(self):
+        """从工具栏移除工具按钮"""
         toolbar = self.iface.vectorToolBar()
-        if toolbar is not None:
-            toolbar.addWidget(self.toolbar_button)
+        if toolbar and self.toolbar_action:
+            try:
+                toolbar.removeAction(self.toolbar_action)
+            except (AttributeError, RuntimeError):
+                pass
+            self.toolbar_action = None
+        
+        # 删除并重新创建 toolbar_button，以便下次 add_toolbar_button 时使用新的
+        if self.toolbar_button:
+            try:
+                self.toolbar_button.deleteLater()
+            except (AttributeError, RuntimeError):
+                pass
+            self.toolbar_button = None
 
     def unload(self):
         self._stop_process()
         if self.action is not None:
             try:
-                self.iface.removeVectorToolBarIcon(self.action)
                 self.iface.removePluginMenu("车道处理工具", self.action)
             except (AttributeError, RuntimeError):
                 pass
+        
+        # 移除工具按钮
+        self.remove_toolbar_button()
         if self.toolbar_button is not None:
             try:
                 self.toolbar_button.deleteLater()
