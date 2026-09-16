@@ -1,0 +1,144 @@
+Lane 批量刷值工具 - 当前可识别错误描述
+版本：v1.0.4.32
+
+说明
+====
+1. 错误描述中的 ID 应为 6 位及以上数字。
+2. LEFT_RVS 和多值字段使用 | 分隔；补充新值时，会追加到现有值末尾。
+3. 示例中的 ID 仅为格式示例。
+4. “动作”表示导入 Excel 后程序会自动执行的修复方式。
+
+一、LANE LEFT_RVS
+================
+
+1. LEFT_RVS 顺序不对
+格式：
+  lane【8051209】的left_rvs中groupID【8051017、8051197】顺序不对
+动作：
+  在该 lane 的 LEFT_RVS 字段中交换前两个指定 ID 的位置。
+
+2. LEFT_RVS 双向互挂缺失
+格式：
+  8051209与8051017互为对方left_rvs，均未被对方记录
+  8051209与8051017互为对方left_rvs，但是未被对方记录，需补充
+动作：
+  8051209 的 LEFT_RVS 追加 8051017；
+  8051017 的 LEFT_RVS 追加 8051209。
+
+3. LEFT_RVS 单向漏记录
+格式：
+  lane【8051209】的left_rvs漏记录8051017
+  lane【8051209】的left_rvs缺记录：8051017
+动作：
+  在指定 lane 的 LEFT_RVS 字段末尾追加缺失 ID。
+
+二、LANE LMARK / 边线
+=====================
+
+1. LMARK 缺失边线
+格式：
+  当前laneid8051208左侧的lmark_l缺失了边线：8051215
+  当前laneid8051208右侧的lmark_r缺失了边线：8051215
+动作：
+  lmark_l 或左侧：将边线追加到 BDY_LEFT；
+  lmark_r 或右侧：将边线追加到 BDY_RIGHT。
+
+2. LMARK 关联了错误的边线
+格式：
+  当前laneid8051218左侧的lmark_l关联了错误的边线：8051065
+  当前laneid8051211右侧的lmark_r关联了错误的边线：8051029
+  当前laneid8051216左侧的lmark_l关联了错误的边线：（当前边线被多个路口lamrk_L/R或bdy_L/R关联）8051001
+动作：
+  lmark_l 或左侧：从该 lane 的 BDY_LEFT 删除错误边线；
+  lmark_r 或右侧：从该 lane 的 BDY_RIGHT 删除错误边线。
+
+3. LMARK 边线顺序错误
+格式：
+  lane【8051208】的lmark_l中边线（8051001）与（8051002）顺序错误
+  lane【8051208】的lmark_r中边线（8051001）与（8051002）顺序错误
+动作：
+  在 BDY_LEFT 或 BDY_RIGHT 中交换两个边线 ID 的位置。
+
+4. 兼容旧格式
+格式：
+  lane id=8051208 lmark_l缺失边线8051215
+  lane id=8051208 lmark_r缺失边线8051215
+  lane id=8051208 lmark_l为空
+  lane id=8051208 lmark_r为空
+动作：
+  缺失边线：补到 BDY_LEFT 或 BDY_RIGHT；
+  lmark_l为空：将 BDY_LEFT 复制到 RBDY_L；
+  lmark_r为空：将 BDY_RIGHT 复制到 RBDY_R。
+
+三、ROAD_LINK BDYID / RBDY
+==========================
+
+1. BDYID 为空
+格式：
+  LINKID=8051160 的bdyid_l是空的
+  LINKID=8051160 的bdyid_r是空的
+动作：
+  对 RBDY_L 或 RBDY_R 执行五级递进补全。
+
+2. 两侧 BDYID 都为空
+格式：
+  LINKID=8051160 的bdyid_l和bdyid_r都是空的
+动作：
+  分别对 RBDY_L 和 RBDY_R 执行五级递进补全。
+
+3. BDYID 错误关联
+格式：
+  linkid:8051078左侧bdyid_l关联的边线ID8051252错误
+  linkid:8051078右侧bdyid_r关联的边线ID8051252错误
+动作：
+  从对应的 RBDY_L 或 RBDY_R 删除错误边线。
+
+4. BDYID 左右侧位错误
+格式：
+  linkid:8051078左侧bdyid_l关联的边线ID8051252,8051254左右侧位错误
+动作：
+  分别从 RBDY_L 和 RBDY_R 删除描述中的错误边线 ID。
+
+5. BDYID 缺失边线
+格式：
+  linkid:8051161左侧bdyid_l缺失了边线：8051195
+  linkid:8051194右侧bdyid_r缺失了边线：8051213
+  linkid=8051160 左侧缺失边线：8051195
+  linkid=8051160 右侧缺失边线：8051213
+动作：
+  向对应的 RBDY_L 或 RBDY_R 追加缺失边线。
+
+6. 不应记录边线
+格式：
+  LINKID=8051160 的bdyid_l中不应记录边线LANEMARKID=8051194
+  LINKID=8051160 左侧bdyid_l不应记录边线：8051194
+动作：
+  从对应的 RBDY_L 或 RBDY_R 删除该边线。
+
+五、LANE 边线左右侧位错误
+=========================
+
+格式：
+  linkid=8051078左侧关联的边线ID8051252左右侧位错误
+  linkid=8051078右侧关联的边线ID8051252左右侧位错误
+  当前laneid8051211左侧的lmark_l关联的边线8051001左右侧位错误
+动作：
+  左侧错误：从 BDY_LEFT 移到 BDY_RIGHT；
+  右侧错误：从 BDY_RIGHT 移到 BDY_LEFT。
+
+六、红绿灯 SIGNAL 关联车道
+==========================
+
+1. 应挂接 lane
+格式：
+  signal=8051007 应挂接lane: 8051173|8051174
+  signal=8051007 应挂接lane: 8051173,8051174
+  signal=8051010(非机动车) 应挂接lane: 8051177
+动作：
+  向该 signal 的 LANES 字段追加车道 ID。
+
+2. 不应挂接 lane
+格式：
+  signal=8051005 多余[不应挂接lane: 8051177]
+动作：
+  从该 signal 的 LANES 字段删除车道 ID。

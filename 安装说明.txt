@@ -1,0 +1,36 @@
+Lane 批量刷值工具 — 安装说明
+================================
+版本见 metadata.txt
+
+【环境】
+- QGIS 3.x（建议 3.28+，已在 3.32 测试）
+- 刷值功能：加载 LANE、LANE_NODE（转向刷值建议加 INTERSECTION）
+- 一键重构：另需安装 Z Attribute、Z Tools，工具栏步骤 6~9 按钮可见
+
+【安装】
+1. 将整个 lanebatchupdate 文件夹复制到：
+   Windows:
+     C:\Users\<用户名>\AppData\Roaming\QGIS\QGIS3\profiles\default\python\plugins\lanebatchupdate\
+   Linux:
+     ~/.local/share/QGIS/QGIS3/profiles/default/python/plugins/lanebatchupdate/
+2. 打开 QGIS → 插件 → 管理并安装插件 → 已安装
+3. 勾选「Lane 批量刷值工具」
+4. 重启 QGIS 或重新加载插件
+
+【工具栏按钮】
+- 限速刷值 / ROAD_TYPE=2 / 转向个数刷值
+- 准备三份数据 / 一键重构(全程)
+
+【可选配置】
+若一键重构找不到 Z Tools 按钮，可复制 reconstruct_algorithms.json.example
+为 reconstruct_algorithms.json 并填写 Processing 算法 ID（一般留空即可）。
+
+【日志】
+运行日志写入插件目录下 log/ 文件夹。
+
+【项目】
+https://github.com/XiaoCiCi-1326/qgis-lanebatchupdate
+
+【联系】
+制作人：石天赐
+2774480158@qq.com

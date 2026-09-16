@@ -1,0 +1,11 @@
+{
+  "_comment": "一般留空即可。一键重构会按顺序点击工具栏四个按钮：",
+  "_step6": "计算 车道边界及车道长宽 (Z Attribute)",
+  "_step7": "计算 道路边界及邻近车道 (Z Attribute)",
+  "_step8": "自动生成 LANE_SECTION, ROAD 图层 (Z Tools)",
+  "_step9": "自动生成 LANE_NODE 图层 (Z Tools)",
+  "step6": "",
+  "step7": "",
+  "step8": "",
+  "step9": ""
+}

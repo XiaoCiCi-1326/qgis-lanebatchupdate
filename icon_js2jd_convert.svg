@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <!-- 文件夹图标 -->
+  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" fill="#4A90E2" stroke="#2E5C8A" stroke-width="1.5"/>
+  
+  <!-- 转换箭头 -->
+  <g transform="translate(6, 10)">
+    <circle cx="2" cy="0" r="1.5" fill="#F97316" stroke="none"/>
+    <line x1="3.5" y1="0" x2="8.5" y2="0" stroke="#F97316" stroke-width="2" stroke-linecap="round"/>
+    <polyline points="7,2 10,0 7,-2" fill="none" stroke="#F97316" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="11" cy="0" r="1.5" fill="#22C55E" stroke="none"/>
+  </g>
+  
+  <!-- JD 标签 -->
+  <text x="12" y="8" font-family="Arial, sans-serif" font-size="5" font-weight="bold" fill="#FFFFFF" text-anchor="middle">JD</text>
+</svg>

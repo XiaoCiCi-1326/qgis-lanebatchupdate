@@ -1,0 +1,22 @@
+# 本地备份，不上传
+备份/
+澶囦唤/
+
+# 本地开发/备份脚本
+backup_plugin.py
+backup_plugin.ps1
+generate_icons.py
+generate_reconstruct_icons.py
+更新说明.txt
+
+# 打包输出
+release/
+log/
+__pycache__/
+*.pyc
+*.pyo
+_install_readme_tmp.txt
+
+# 一次性发布脚本（本地使用）
+rebuild_publish_history.py
+_publish_staging_backup/

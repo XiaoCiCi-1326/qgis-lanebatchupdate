@@ -1,0 +1,43 @@
+# This file contains metadata for your plugin.
+
+# This file should be included when you package your plugin.# Mandatory items:
+
+[general]
+name=Lane 批量刷值工具
+qgisMinimumVersion=3.0
+description=限速刷值 / ROAD_TYPE=2 / 转向个数刷值 / 一键重构 / 全量补空RBDY / Excel边线改错 / 自动走3.16质检错 / 文件名搜索与复制
+version=1.0.4.87
+author=石天赐
+email=2774480158@qq.com
+
+about=读取 LANE、LANE_NODE、INTERSECTION 刷 SPEEDLIMIT 与 VIRTUAL；一键重构复制三份数据并执行步骤6~9后回写 RBDY 字段；支持 QGIS 3.16 扳手错和 jdchecker 自动质检。项目主页与源码见下方链接。
+
+homepage=https://github.com/XiaoCiCi-1326/qgis-lanebatchupdate
+tracker=https://github.com/XiaoCiCi-1326/qgis-lanebatchupdate/issues
+repository=https://github.com/XiaoCiCi-1326/qgis-lanebatchupdate
+# End of mandatory metadata
+
+# Recommended items:
+
+hasProcessingProvider=no
+tags=vector, lane, attribute
+
+category=Vector
+icon=icon.png
+# experimental flag
+experimental=False
+
+# deprecated flag (applies to the whole plugin, not just a single version)
+deprecated=False
+
+# Since QGIS 3.8, a comma separated list of plugins to be installed
+# (or upgraded) can be specified.
+# Check the documentation for more information.
+# plugin_dependencies=
+
+Category of the plugin: Raster, Vector, Database or Web
+# category=
+
+# If the plugin can run on QGIS Server.
+server=False
+
