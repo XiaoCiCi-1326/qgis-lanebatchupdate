@@ -38,6 +38,7 @@ RELEASE_FILES = (
     "icon_virtual.png",
     "icon_mesh_map_tile_id.svg",
     "icon_simplify.svg",
+    "icon_simplify_selected.svg",
     "icon_check_right_straight.svg",
     "icon_clear_right_straight.svg",
     "icon_lane_fix.png",

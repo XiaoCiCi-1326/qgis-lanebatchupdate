@@ -340,8 +340,14 @@ class ImageViewerDialog(QDialog):
         self.scale_label.setText(f"{int(scale * 100)}%")
 
     # ---------- 对外接口 ----------
-    def load_image(self, image_path):
-        """加载图片（复用窗口的核心方法）"""
+    def load_image(self, image_path, photo_index=0, total_photos=1):
+        """加载图片（复用窗口的核心方法）
+        
+        Args:
+            image_path: 图片路径
+            photo_index: 当前照片索引（从0开始）
+            total_photos: 当前要素的总照片数
+        """
         self.current_image_path = image_path
 
         if not image_path or not os.path.isfile(image_path):
@@ -357,10 +363,17 @@ class ImageViewerDialog(QDialog):
         scale = self.image_canvas._fit_scale(self.image_canvas.size())
         self.image_canvas.set_pixmap(pixmap, scale)
 
-        # 更新标题和信息
+        # 更新标题和信息（包含照片索引）
         filename = os.path.basename(image_path)
-        self.setWindowTitle(f"惯导照片查看 - {filename}")
-        self.info_label.setText(f"{image_path}  [{pixmap.width()}x{pixmap.height()}]")
+        if total_photos > 1:
+            title = f"惯导照片查看 - {filename} ({photo_index + 1}/{total_photos})"
+            info = f"{image_path}  [{pixmap.width()}x{pixmap.height()}]  ({photo_index + 1}/{total_photos})"
+        else:
+            title = f"惯导照片查看 - {filename}"
+            info = f"{image_path}  [{pixmap.width()}x{pixmap.height()}]"
+        
+        self.setWindowTitle(title)
+        self.info_label.setText(info)
 
     # ---------- 内部 ----------
     def _show_placeholder(self, text):

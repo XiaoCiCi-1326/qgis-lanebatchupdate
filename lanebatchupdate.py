@@ -49,6 +49,7 @@ class LaneBatchUpdateTool:
     MODE_SPEED = "speed"
     MODE_SET_ROAD2 = "set_road2"
     MODE_AUTO_SIMPLIFY = "auto_simplify"
+    MODE_SIMPLIFY_SELECTED = "simplify_selected"
     MODE_VIRTUAL = "virtual"
     MODE_MESH_MAP_TILE_ID = "mesh_map_tile_id"
     MODE_REMOVE_ALL = "remove_all"
@@ -300,6 +301,7 @@ class LaneBatchUpdateTool:
             (self.MODE_VIRTUAL, "转向个数刷取（覆盖）", "icon_virtual.png"),
             (self.MODE_MESH_MAP_TILE_ID, "MESH=n / MAP_TILE.ID=n（覆盖）", "icon_mesh_map_tile_id.svg"),
             (self.MODE_AUTO_SIMPLIFY, "自动抽稀", "icon_simplify.svg"),
+            (self.MODE_SIMPLIFY_SELECTED, "选中抽稀", "icon_simplify_selected.svg"),
         ):
             action = QAction(QIcon(os.path.join(self.plugin_dir, icon_name)), label, parent)
             action.triggered.connect(lambda *args, m=mode: self.run(mode=m))
@@ -2292,6 +2294,186 @@ class LaneBatchUpdateTool:
         self.log(f"已从当前工程移除全部 {layer_count} 个图层")
         QMessageBox.information(None, "操作完成", f"已移除 {layer_count} 个图层。\n源数据文件未删除。")
 
+    def auto_simplify(self):
+        """自动抽稀：简化LANE图层中TURN_TYPE=0或1的要素"""
+        from qgis.core import NULL
+        
+        # 查找LANE图层
+        lane_layer = None
+        for layer in QgsProject.instance().mapLayers().values():
+            if isinstance(layer, QgsVectorLayer) and layer.name().upper() == 'LANE':
+                lane_layer = layer
+                break
+        
+        if not lane_layer:
+            QMessageBox.warning(None, "自动抽稀", "未找到名为 LANE 的图层！")
+            return
+        
+        # 检查是否有TURN_TYPE字段
+        turn_type_field = None
+        for field in lane_layer.fields():
+            if field.name().upper() == 'TURN_TYPE':
+                turn_type_field = field.name()
+                break
+        
+        if not turn_type_field:
+            QMessageBox.warning(None, "自动抽稀", "LANE 图层中没有 TURN_TYPE 字段！")
+            return
+        
+        # 获取TURN_TYPE=0或1的要素
+        features_to_simplify = []
+        for feature in lane_layer.getFeatures():
+            turn_type = feature[turn_type_field]
+            # 处理NULL和空值
+            if turn_type is NULL or turn_type is None or str(turn_type).strip() == '':
+                continue
+            try:
+                if int(turn_type) in (0, 1):
+                    features_to_simplify.append(feature.id())
+            except (ValueError, TypeError):
+                continue
+        
+        if not features_to_simplify:
+            QMessageBox.information(None, "自动抽稀", "没有找到 TURN_TYPE=0 或 TURN_TYPE=1 的要素！")
+            return
+        
+        # 确认操作
+        reply = QMessageBox.question(
+            None, "自动抽稀",
+            f"将对 {len(features_to_simplify)} 个要素进行简化抽稀\n（容差：0.05米）\n是否继续？",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            return
+        
+        # 开始编辑并简化
+        lane_layer.startEditing()
+        lane_layer.beginEditCommand("自动抽稀")
+        simplified_count = 0
+        tolerance = 0.05
+        
+        try:
+            for feature_id in features_to_simplify:
+                feature = lane_layer.getFeature(feature_id)
+                geometry = feature.geometry()
+                
+                if geometry and not geometry.isNull():
+                    # 使用simplify按距离简化
+                    simplified_geom = geometry.simplify(tolerance)
+                    if simplified_geom and not simplified_geom.isNull():
+                        # 计算简化前后的点数
+                        try:
+                            if geometry.isMultipart():
+                                old_points = sum(len(line) for line in geometry.asMultiPolyline())
+                                new_points = sum(len(line) for line in simplified_geom.asMultiPolyline())
+                            else:
+                                old_points = len(geometry.asPolyline())
+                                new_points = len(simplified_geom.asPolyline())
+                        except:
+                            old_points = 0
+                            new_points = 0
+                        
+                        if new_points < old_points or (old_points == 0 and new_points == 0):
+                            lane_layer.changeGeometry(feature_id, simplified_geom)
+                            simplified_count += 1
+            
+            lane_layer.endEditCommand()
+            
+            self.iface.messageBar().pushMessage(
+                "自动抽稀",
+                f"成功简化 {simplified_count}/{len(features_to_simplify)} 个要素（可按 Ctrl+Z 撤销）",
+                level=Qgis.Success,
+                duration=5
+            )
+        except Exception as e:
+            lane_layer.destroyEditCommand()
+            self.iface.messageBar().pushMessage(
+                "自动抽稀失败",
+                f"简化过程中出错：{str(e)}",
+                level=Qgis.Critical,
+                duration=5
+            )
+    
+    def simplify_selected(self):
+        """选中抽稀：简化LANE图层中选中的要素"""
+        from qgis.core import NULL
+        
+        # 查找LANE图层
+        lane_layer = None
+        for layer in QgsProject.instance().mapLayers().values():
+            if isinstance(layer, QgsVectorLayer) and layer.name().upper() == 'LANE':
+                lane_layer = layer
+                break
+        
+        if not lane_layer:
+            QMessageBox.warning(None, "选中抽稀", "未找到名为 LANE 的图层！")
+            return
+        
+        # 获取选中的要素
+        selected_features = lane_layer.selectedFeatures()
+        if not selected_features:
+            QMessageBox.information(None, "选中抽稀", "请先选中要抽稀的要素！")
+            return
+        
+        features_to_simplify = [f.id() for f in selected_features]
+        
+        # 确认操作
+        reply = QMessageBox.question(
+            None, "选中抽稀",
+            f"将对选中的 {len(features_to_simplify)} 个要素进行简化抽稀\n（容差：0.05米）\n是否继续？",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            return
+        
+        # 开始编辑并简化
+        lane_layer.startEditing()
+        lane_layer.beginEditCommand("选中抽稀")
+        simplified_count = 0
+        tolerance = 0.05
+        
+        try:
+            for feature_id in features_to_simplify:
+                feature = lane_layer.getFeature(feature_id)
+                geometry = feature.geometry()
+                
+                if geometry and not geometry.isNull():
+                    # 使用simplify按距离简化
+                    simplified_geom = geometry.simplify(tolerance)
+                    if simplified_geom and not simplified_geom.isNull():
+                        # 计算简化前后的点数
+                        try:
+                            if geometry.isMultipart():
+                                old_points = sum(len(line) for line in geometry.asMultiPolyline())
+                                new_points = sum(len(line) for line in simplified_geom.asMultiPolyline())
+                            else:
+                                old_points = len(geometry.asPolyline())
+                                new_points = len(simplified_geom.asPolyline())
+                        except:
+                            old_points = 0
+                            new_points = 0
+                        
+                        if new_points < old_points or (old_points == 0 and new_points == 0):
+                            lane_layer.changeGeometry(feature_id, simplified_geom)
+                            simplified_count += 1
+            
+            lane_layer.endEditCommand()
+            
+            self.iface.messageBar().pushMessage(
+                "选中抽稀",
+                f"成功简化 {simplified_count}/{len(features_to_simplify)} 个要素（可按 Ctrl+Z 撤销）",
+                level=Qgis.Success,
+                duration=5
+            )
+        except Exception as e:
+            lane_layer.destroyEditCommand()
+            self.iface.messageBar().pushMessage(
+                "选中抽稀失败",
+                f"简化过程中出错：{str(e)}",
+                level=Qgis.Critical,
+                duration=5
+            )
+
     def run(self, mode):
         if mode == self.MODE_REFRESH_PROJECT:
             self.refresh_project()
@@ -2306,8 +2488,13 @@ class LaneBatchUpdateTool:
             return
         
         if mode == self.MODE_AUTO_SIMPLIFY:
-            # 调用属性预设控制器的自动抽稀功能
-            self.attribute_preset._auto_simplify()
+            # 调用自动抽稀功能
+            self.auto_simplify()
+            return
+
+        if mode == self.MODE_SIMPLIFY_SELECTED:
+            # 调用选中抽稀功能
+            self.simplify_selected()
             return
 
         if mode == self.MODE_MESH_MAP_TILE_ID:

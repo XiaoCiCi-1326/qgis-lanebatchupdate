@@ -63,6 +63,9 @@ class ImageViewerController(QObject):
         self.current_fid = None
         self.all_fids = []
         self.current_image_path = None
+        # 多照片导航
+        self.current_photo_list = []  # 当前要素的所有照片路径
+        self.current_photo_index = 0  # 当前显示的照片索引
 
         # 窗口/面板（复用，不重复创建）
         self.pairing_dialog = None
@@ -341,6 +344,9 @@ class ImageViewerController(QObject):
         self.current_layer = layer
         self.all_fids = sorted([f.id() for f in layer.getFeatures()])
         self.current_fid = selected_fids[0]  # 只显示第一个
+        
+        # 重置照片索引，从第一张开始
+        self.current_photo_index = 0
 
         # 显示照片，并在开启画布跟随时定位选中要素。
         self._show_photo(layer, self.current_fid)
@@ -393,16 +399,42 @@ class ImageViewerController(QObject):
         if not img_name:
             return
 
-        # 补齐扩展名
-        if not os.path.splitext(str(img_name))[1]:
-            img_name = str(img_name) + ".jpg"
-
-        img_path = os.path.join(img_dir, str(img_name))
-        if not os.path.exists(img_path):
+        # 处理多个照片文件名（用 | 或其他分隔符分隔）
+        img_names = str(img_name).replace('|', ',').replace(';', ',').split(',')
+        img_names = [name.strip() for name in img_names if name.strip()]
+        
+        if not img_names:
             return
-
-        # 根据模式显示
+        
+        # 收集所有存在的照片文件
+        self.current_photo_list = []
+        for name in img_names:
+            # 补齐扩展名
+            if not os.path.splitext(name)[1]:
+                name = name + ".jpg"
+            
+            full_path = os.path.join(img_dir, name)
+            if os.path.exists(full_path):
+                self.current_photo_list.append(full_path)
+        
+        if not self.current_photo_list:
+            # 如果所有照片都不存在，显示提示信息
+            self.iface.messageBar().pushMessage(
+                "照片未找到",
+                f"要素 {fid} 的照片文件不存在: {', '.join(img_names[:3])}{'...' if len(img_names) > 3 else ''}",
+                Qgis.Warning,
+                3,
+            )
+            return
+        
+        # 确保索引在有效范围内
+        if self.current_photo_index >= len(self.current_photo_list):
+            self.current_photo_index = 0
+        
+        # 显示当前索引的照片
+        img_path = self.current_photo_list[self.current_photo_index]
         self.current_image_path = img_path
+        
         if self.display_mode == 'dock':
             self._show_in_dock(img_path)
         else:
@@ -418,7 +450,12 @@ class ImageViewerController(QObject):
             self.viewer_dialog.set_follow_map_enabled(self.follow_map_enabled)
 
         was_visible = self.viewer_dialog.isVisible()
-        self.viewer_dialog.load_image(img_path)
+        # 传递照片索引信息
+        self.viewer_dialog.load_image(
+            img_path, 
+            self.current_photo_index, 
+            len(self.current_photo_list)
+        )
         if not was_visible:
             # 仅首次显示时激活窗口；切换照片时不改变窗口状态，避免 Windows 闪烁。
             self.viewer_dialog.show()
@@ -437,6 +474,15 @@ class ImageViewerController(QObject):
 
         pixmap = QPixmap(img_path)
         if not pixmap.isNull():
+            # 更新停靠面板标题（包含照片索引）
+            if len(self.current_photo_list) > 1:
+                filename = os.path.basename(img_path)
+                self.dock_widget.setWindowTitle(
+                    f"照片查看 - {filename} ({self.current_photo_index + 1}/{len(self.current_photo_list)})"
+                )
+            else:
+                self.dock_widget.setWindowTitle("照片查看")
+            
             self.dock_widget.show()
             # 使用 ImageCanvas 显示图片，并根据面板尺寸自动适应
             self.dock_canvas.set_pixmap(pixmap, 1.0)
@@ -568,32 +614,57 @@ class ImageViewerController(QObject):
 
     # ---------- 导航 ----------
     def show_prev(self):
-        """上一张（在整个图层中跳转）"""
+        """上一张（先在当前要素的多张照片中导航，再跳到上一个要素）"""
         if not self.current_layer or not self.all_fids or self.current_fid is None:
             return
 
+        # 如果当前要素有多张照片，先在这些照片中导航
+        if len(self.current_photo_list) > 1 and self.current_photo_index > 0:
+            self.current_photo_index -= 1
+            self._show_photo(self.current_layer, self.current_fid)
+            return
+
+        # 当前要素的照片已经是第一张，跳到上一个要素
         if self.current_fid not in self.all_fids:
             return
 
         idx = self.all_fids.index(self.current_fid)
         new_idx = (idx - 1) % len(self.all_fids)
         self.current_fid = self.all_fids[new_idx]
+        
+        # 重置照片索引为最后一张（因为是往回导航）
+        self.current_photo_index = 9999  # 临时设置大值，_show_photo 会自动调整
 
         # 选中并显示
         self.current_layer.selectByIds([self.current_fid])
         self._show_photo(self.current_layer, self.current_fid)
+        
+        # 调整到最后一张照片
+        if self.current_photo_list:
+            self.current_photo_index = len(self.current_photo_list) - 1
+            self._show_photo(self.current_layer, self.current_fid)
 
     def show_next(self):
-        """下一张（在整个图层中跳转）"""
+        """下一张（先在当前要素的多张照片中导航，再跳到下一个要素）"""
         if not self.current_layer or not self.all_fids or self.current_fid is None:
             return
 
+        # 如果当前要素有多张照片，先在这些照片中导航
+        if len(self.current_photo_list) > 1 and self.current_photo_index < len(self.current_photo_list) - 1:
+            self.current_photo_index += 1
+            self._show_photo(self.current_layer, self.current_fid)
+            return
+
+        # 当前要素的照片已经是最后一张，跳到下一个要素
         if self.current_fid not in self.all_fids:
             return
 
         idx = self.all_fids.index(self.current_fid)
         new_idx = (idx + 1) % len(self.all_fids)
         self.current_fid = self.all_fids[new_idx]
+        
+        # 重置照片索引为第一张
+        self.current_photo_index = 0
 
         # 选中并显示
         self.current_layer.selectByIds([self.current_fid])
