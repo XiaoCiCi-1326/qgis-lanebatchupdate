@@ -83,7 +83,7 @@ class ImageViewerController(QObject):
         self._load_pairs()
 
     # ---------- 初始化 ----------
-    def initGui(self, actions_master):
+    def initGui(self, actions_master, register_action=True):
         """创建下拉工具栏按钮"""
         parent = self.iface.mainWindow()
 
@@ -127,7 +127,8 @@ class ImageViewerController(QObject):
         # 添加到菜单
         for act in [self.pairing_action, self.view_action, self.prev_action,
                     self.next_action, self.dock_action]:
-            self.iface.addPluginToVectorMenu("车道处理工具", act)
+            if register_action:
+                self.iface.addPluginToVectorMenu("车道处理工具", act)
             actions_master.append(act)
 
         # 停靠面板没有独立窗口承载快捷键，因此绑定到 QGIS 主窗口。

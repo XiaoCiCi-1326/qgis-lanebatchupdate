@@ -95,7 +95,7 @@ class LayerToolsController:
         self.restrict = False
         self.active_layer = "BOUNDARY"
 
-    def initGui(self, actions_master):
+    def initGui(self, actions_master, register_action=True):
         entries = (
             ("图层快捷切换", "icon_layer_switch.png", self.open_switch_settings),
             ("图层显隐方案", "icon_layer_visibility.png", self.open_visibility_settings),
@@ -104,7 +104,8 @@ class LayerToolsController:
         for label, icon_name, callback in entries:
             action = QAction(QIcon(os.path.join(self.plugin_dir, icon_name)), label, self.iface.mainWindow())
             action.triggered.connect(callback)
-            self.iface.addPluginToVectorMenu(MENU_NAME, action)
+            if register_action:
+                self.iface.addPluginToVectorMenu(MENU_NAME, action)
             self.actions.append(action)
             actions_master.append(action)
 

@@ -152,48 +152,45 @@ class LaneBatchUpdateTool:
             self.iface.addPluginToVectorMenu("车道处理工具", action)
             self.actions.append(action)
         
-        self.reconstruct.initGui(self.actions)
-        self.lane_fix.initGui(self.actions)
-        self.excel_preview.initGui(self.actions)
-        self.inertial_follow.initGui(self.actions)
-        self.map_tile_snap.initGui(self.actions)
-        self.lane_stopline_snap.initGui(self.actions)
-        self.lane_boundary_join.initGui(self.actions)
-        self.aligned_split.initGui(self.actions)
-        self.attribute_preset.initGui(self.actions)
+        self.reconstruct.initGui(self.actions, register_action=False)
+        self.lane_fix.initGui(self.actions, register_action=False)
+        self.excel_preview.initGui(self.actions, register_action=False)
+        self.inertial_follow.initGui(self.actions, register_action=False)
+        self.map_tile_snap.initGui(self.actions, register_action=False)
+        self.lane_stopline_snap.initGui(self.actions, register_action=False)
+        self.lane_boundary_join.initGui(self.actions, register_action=False)
+        self.aligned_split.initGui(self.actions, register_action=False)
+        self.attribute_preset.initGui(self.actions, register_action=False)
         self.boundary_length.initGui(self.actions, register_action=False)
-        self.raster_pyramid.initGui(self.actions)
-        self.raster_compress.initGui(self.actions)
-        self.raster_tile_loader.initGui(self.actions)
-        self.js2jd_convert.initGui(self.actions)
-        self.filename_search.initGui(self.actions)
-        self.jdchecker.initGui(self.actions)
-        self.shpchecker.initGui(self.actions, self.jdchecker.action)
-        self.layer_tools.initGui(self.actions)
-        self.feature_visibility.initGui(self.actions)
-        self.image_viewer.initGui(self.actions)
-        self.feature_relation.initGui(self.actions)
+        self.raster_pyramid.initGui(self.actions, register_action=False)
+        self.raster_compress.initGui(self.actions, register_action=False)
+        self.raster_tile_loader.initGui(self.actions, register_action=False)
+        self.js2jd_convert.initGui(self.actions, register_action=False)
+        self.filename_search.initGui(self.actions, register_action=False)
+        self.jdchecker.initGui(self.actions, register_action=False)
+        self.shpchecker.initGui(self.actions, self.jdchecker.action, register_action=False)
+        self.layer_tools.initGui(self.actions, register_action=False)
+        self.feature_visibility.initGui(self.actions, register_action=False)
+        self.image_viewer.initGui(self.actions, register_action=False)
+        self.feature_relation.initGui(self.actions, register_action=False)
         self._create_attribute_fill_button()
 
         # 根据保存的模式初始化工具栏布局
         print(f"[LaneBatchUpdate] 当前工具栏模式: {self.toolbar_mode}")
         if self.toolbar_mode == "flat":
             print(f"[LaneBatchUpdate] 应用平铺模式，添加 {len(self.actions)} 个按钮到工具栏")
+            # 平铺模式：添加所有下拉按钮
+            self.jdchecker.add_toolbar_button()
+            self._create_attribute_fill_button()
+            self.shpchecker.add_toolbar_button()
+            self.feature_relation.add_toolbar_button()
+            self.image_viewer.add_toolbar_button()
+            # 添加其他普通按钮
             self._apply_flat_mode()
         else:
             print(f"[LaneBatchUpdate] 应用菜单模式，使用分类菜单")
-            # 确保 filename_search 按钮不会在菜单模式下显示
-            self.filename_search.remove_toolbar_button()
+            # 收起模式：只显示分类菜单
             self._create_categorized_menu()
-
-        # 照片查看器始终显示为一个带下拉菜单的按钮。
-        self.image_viewer.add_toolbar_button()
-        
-        # 关联功能始终显示为一个带下拉菜单的按钮
-        self.feature_relation.add_toolbar_button()
-        
-        # shpchecker 始终显示为一个带下拉菜单的按钮
-        self.shpchecker.add_toolbar_button()
 
     def _toggle_toolbar_mode(self):
         if self.toolbar_mode == "flat":
@@ -229,7 +226,7 @@ class LaneBatchUpdateTool:
 
     def _apply_toolbar_mode(self):
         """切换工具栏模式 - 移除所有按钮后重新应用"""
-        # 移除所有 action（包括主文件和子控制器的）
+        # 1. 移除所有特殊的工具按钮
         self.filename_search.remove_toolbar_button()
         self._remove_attribute_fill_button()
         self.image_viewer.remove_toolbar_button()
@@ -237,13 +234,20 @@ class LaneBatchUpdateTool:
         self.shpchecker.remove_toolbar_button()
         self.jdchecker.remove_toolbar_button()
         
+        # 2. 移除所有普通 action 按钮（平铺模式会添加的）
         for action in self.actions:
             try:
                 self.iface.removeVectorToolBarIcon(action)
             except (AttributeError, RuntimeError, TypeError):
                 pass
+        
+        # 3. 移除切换按钮
+        try:
+            self.iface.removeVectorToolBarIcon(self.toggle_action)
+        except (AttributeError, RuntimeError, TypeError):
+            pass
 
-        # 移除菜单按钮（如果存在）
+        # 4. 移除菜单按钮（如果存在）
         if self.menu_button:
             toolbar = self.iface.vectorToolBar()
             if toolbar:
@@ -258,24 +262,26 @@ class LaneBatchUpdateTool:
             self.menu_button = None
             self.main_menu = None
 
-        # 按照指定顺序添加固定的下拉按钮
-        # 1. jdchecker 始终在第一个
-        self.jdchecker.add_toolbar_button()
-        # 2. attribute_fill 刷值功能始终在第二个
-        self._create_attribute_fill_button()
-        # 3. shpchecker 3.16扳手错质检
-        self.shpchecker.add_toolbar_button()
-        # 4. 关联功能
-        self.feature_relation.add_toolbar_button()
-        # 5. 图片查看器
-        self.image_viewer.add_toolbar_button()
-
-        # 重新应用当前模式（平铺或菜单）
+        # 5. 重新添加切换按钮（总是第一个）
+        self.iface.addVectorToolBarIcon(self.toggle_action)
+        
+        # 6. 根据模式添加按钮
         if self.toolbar_mode == "flat":
+            # 平铺模式：添加所有下拉按钮和普通按钮
+            # 1. jdchecker
+            self.jdchecker.add_toolbar_button()
+            # 2. attribute_fill 刷值功能
+            self._create_attribute_fill_button()
+            # 3. shpchecker 3.16扳手错质检
+            self.shpchecker.add_toolbar_button()
+            # 4. 关联功能
+            self.feature_relation.add_toolbar_button()
+            # 5. 图片查看器
+            self.image_viewer.add_toolbar_button()
+            # 6. 添加其他所有普通按钮
             self._apply_flat_mode()
         else:
-            # 确保 filename_search 按钮不会在菜单模式下显示
-            self.filename_search.remove_toolbar_button()
+            # 收起模式：只显示分类菜单按钮
             self._create_categorized_menu()
 
     def _create_attribute_fill_button(self):
@@ -403,6 +409,7 @@ class LaneBatchUpdateTool:
             "边线修复": [
                 ("lane_fix", "Excel边线改错", "icon_lane_fix.png"),
                 ("excel_preview", "预览后修复", "icon_lane_fix.png"),
+                (self.MODE_FIX_LANE_NUM, "修复 LANE_NUM", "icon_lane_num_fix.svg"),
             ],
             "吸附接边": [
                 ("map_tile_snap", "吸附到范围框", "icon_map_tile_snap.svg"),
@@ -415,13 +422,31 @@ class LaneBatchUpdateTool:
                 ("add_feature", "添加要素", "icon_add_feature_preset.svg"),
             ],
             "质检与显示": [
+                ("jdchecker", "JD质检", "icon_jdchecker.svg"),
                 (self.MODE_SHOW_ERROR_RESULTS, "全部规则", "icon_error_results.svg"),
                 (self.MODE_CLEAR_ALL_HIGHLIGHTS, "取消全部高亮", "icon_clear_right_straight.svg"),
                 ("shpchecker_316", "3.16扳手错质检", "icon_316_wrench.svg"),
+                ("boundary_length", "BOUNDARY长度筛选", "icon_boundary_length.svg"),
+            ],
+            "刷值工具": [
+                ("fill_speed", "刷写限速/车道速度", "icon_speed.png"),
+                ("fill_road_type", "刷写道路类型", "icon_road2.png"),
+                ("fill_virtual", "刷写虚拟", "icon_virtual.png"),
+                ("fill_mesh_tile", "计算MESH/MAP_TILE", "icon_mesh_map_tile_id.svg"),
+            ],
+            "关联功能": [
+                ("relation_auto_mode", "自动关联模式", "icon_auto_relation.svg"),
+                ("relation_config", "关联配置", "icon_relation_config.svg"),
+                ("relation_assign", "关联赋值", "icon_relation_assign.svg"),
+            ],
+            "图片查看": [
+                ("image_viewer_pairing", "图片查看器配对", "icon_image_pairing.svg"),
+                ("image_viewer", "图片查看器", "icon_image_viewer.svg"),
             ],
             "辅助工具": [
                 ("inertial_follow", "惯导地图跟随", "icon_inertial_follow.svg"),
                 ("raster_pyramid", "TIF 生成金字塔", "icon_raster_pyramid.svg"),
+                ("raster_compress", "TIF 压缩", "icon_raster_compress.svg"),
                 ("raster_tile_loader", "加载 MAP_TILE 栅格", "icon_raster_tile_loader.svg"),
                 (self.MODE_JS2JD_CONVERT, "Js2jd 转换", "icon_js2jd_convert.svg"),
                 ("filename_search", "搜索文件名", "icon_filename_search.svg"),
@@ -430,7 +455,6 @@ class LaneBatchUpdateTool:
                 ("layer_visibility", "图层显隐方案", "icon_layer_visibility.png"),
                 ("side_button_toggle", "侧键切换图层", "icon_side_button_toggle.svg"),
                 ("feature_visibility", "隐藏/显示选中要素", "icon_feature_hide.svg"),
-                ("relation_assign", "关联赋值", "icon_relation_assign.svg"),
                 (self.MODE_REFRESH_PROJECT, "刷新当前工程", "icon_refresh_project.svg"),
                 (self.MODE_REMOVE_ALL, "移除所有图层", "icon_remove_layers.svg"),
             ],
@@ -477,6 +501,8 @@ class LaneBatchUpdateTool:
             self.inertial_follow.toggle()
         elif item_id == "raster_pyramid":
             self.raster_pyramid.run()
+        elif item_id == "raster_compress":
+            self.raster_compress.run()
         elif item_id == "raster_tile_loader":
             self.raster_tile_loader.run()
         elif item_id == "map_tile_snap":
@@ -505,16 +531,36 @@ class LaneBatchUpdateTool:
             self.layer_tools.open_toggle_settings()
         elif item_id == "feature_visibility":
             self.feature_visibility.toggle_selected_features()
-        elif item_id == "relation_highlight":
-            self.feature_relation.toggle_highlight()
-        elif item_id == "relation_select":
-            self.feature_relation.select_related()
+        # 刷值工具
+        elif item_id == "fill_speed":
+            self.run(mode=self.MODE_SPEED)
+        elif item_id == "fill_road_type":
+            self.run(mode=self.MODE_SET_ROAD2)
+        elif item_id == "fill_virtual":
+            self.run(mode=self.MODE_VIRTUAL)
+        elif item_id == "fill_mesh_tile":
+            self.run(mode=self.MODE_MESH_MAP_TILE_ID)
+        # 关联功能
+        elif item_id == "relation_auto_mode":
+            self.feature_relation.toggle_auto_mode()
+        elif item_id == "relation_config":
+            self.feature_relation.open_config_dialog()
         elif item_id == "relation_assign":
             self.feature_relation.assign_relation()
+        # 图片查看器
+        elif item_id == "image_viewer_pairing":
+            self.image_viewer.open_pairing_dialog()
+        elif item_id == "image_viewer":
+            if not self.image_viewer.view_action.isChecked():
+                self.image_viewer.view_action.setChecked(True)
+                self.image_viewer._toggle_view_mode()
+        # 质检
         elif item_id == "shpchecker_316":
             self.shpchecker.run()
-        elif item_id == "jdchecker_316":
+        elif item_id == "jdchecker":
             self.jdchecker.run()
+        elif item_id == "boundary_length":
+            self.boundary_length.show()
 
     def unload(self):
         self.clear_overlap_highlights()

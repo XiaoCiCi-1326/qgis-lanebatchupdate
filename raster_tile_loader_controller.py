@@ -22,12 +22,13 @@ class RasterTileLoaderController:
         self.action = None
         self.settings = QSettings()
 
-    def initGui(self, actions_master):
+    def initGui(self, actions_master, register_action=True):
         icon_path = os.path.join(self.plugin_dir, "icon_raster_tile_loader.svg")
         self.action = QAction(QIcon(icon_path), "加载 MAP_TILE 栅格", self.iface.mainWindow())
         self.action.setToolTip("按选中的 MAP_TILE 自动加载 intensity 和 density 栅格")
         self.action.triggered.connect(self.run)
-        self.iface.addPluginToVectorMenu("车道处理工具", self.action)
+        if register_action:
+            self.iface.addPluginToVectorMenu("车道处理工具", self.action)
         actions_master.append(self.action)
 
     def unload(self):

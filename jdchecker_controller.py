@@ -82,12 +82,13 @@ class JdCheckerController:
         except (OSError, subprocess.SubprocessError):
             pass
 
-    def initGui(self, actions_master):
+    def initGui(self, actions_master, register_action=True):
         icon = QIcon(os.path.join(self.plugin_dir, "icon_jdchecker.svg"))
         self.action = QAction(icon, "自动走3.16质检错", self.iface.mainWindow())
         self.action.setToolTip("将19个数据文件交给 QGIS 3.16 jdchecker 自动质检")
         self.action.triggered.connect(self.run)
-        self.iface.addPluginToVectorMenu("车道处理工具", self.action)
+        if register_action:
+            self.iface.addPluginToVectorMenu("车道处理工具", self.action)
         actions_master.append(self.action)
     
     def add_toolbar_button(self):

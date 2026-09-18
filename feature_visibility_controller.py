@@ -25,7 +25,7 @@ class FeatureVisibilityController:
         # 记录每个图层原始的渲染器（用于编辑模式恢复）
         self.original_renderers = {}
 
-    def initGui(self, actions_master):
+    def initGui(self, actions_master, register_action=True):
         # 创建主菜单按钮
         self.action = QAction(
             QIcon(os.path.join(self.plugin_dir, "icon_feature_visibility.svg")),
@@ -104,7 +104,8 @@ class FeatureVisibilityController:
         self.menu.addAction(show_all_layers)
 
         self.action.setMenu(self.menu)
-        self.iface.addPluginToVectorMenu(MENU_NAME, self.action)
+        if register_action:
+            self.iface.addPluginToVectorMenu(MENU_NAME, self.action)
         actions_master.append(self.action)
 
     def unload(self):

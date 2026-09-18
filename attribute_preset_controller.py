@@ -1311,7 +1311,7 @@ class AttributePresetController:
         # QGIS 的编辑缓冲区会持有悬空指针，导致 commitChanges() 失败
         self._pending_features = []  # 临时存储，直到图层保存或取消编辑
 
-    def initGui(self, actions):
+    def initGui(self, actions, register_action=True):
         global _ACTIVE_CONTROLLER
         _ACTIVE_CONTROLLER = self
         self._remove_previous_form_hooks()
@@ -1339,7 +1339,8 @@ class AttributePresetController:
         self.add_feature_action.triggered.connect(self._toggle_add_feature)
         # 不直接添加到工具栏，由主文件根据 toolbar_mode 控制
         # self.iface.addVectorToolBarIcon(self.add_feature_action)
-        self.iface.addPluginToVectorMenu("车道处理工具", self.add_feature_action)
+        if register_action:
+            self.iface.addPluginToVectorMenu("车道处理工具", self.add_feature_action)
         actions.append(self.add_feature_action)
 
         action = QAction(QIcon(preset_icon_path), "属性预设", self.iface.mainWindow())
@@ -1347,7 +1348,8 @@ class AttributePresetController:
         action.triggered.connect(self.show)
         # 不直接添加到工具栏，由主文件根据 toolbar_mode 控制
         # self.iface.addVectorToolBarIcon(action)
-        self.iface.addPluginToVectorMenu("车道处理工具", action)
+        if register_action:
+            self.iface.addPluginToVectorMenu("车道处理工具", action)
         actions.append(action)
 
     def unload(self):

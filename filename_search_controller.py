@@ -23,7 +23,7 @@ class FileNameSearchController:
         self.toolbar_button = None
         self.toolbar_action = None
 
-    def initGui(self, actions):
+    def initGui(self, actions, register_action=True):
         search_icon_path = os.path.join(self.plugin_dir, "icon_filename_search.svg")
         copy_icon_path = os.path.join(self.plugin_dir, "icon_filename_copy.svg")
         parent = self.iface.mainWindow()
@@ -40,8 +40,9 @@ class FileNameSearchController:
         self.toolbar_button.setMenu(menu)
         self.toolbar_button.setPopupMode(QToolButton.MenuButtonPopup)
 
-        self.iface.addPluginToVectorMenu("车道处理工具", self.search_action)
-        self.iface.addPluginToVectorMenu("车道处理工具", self.copy_action)
+        if register_action:
+            self.iface.addPluginToVectorMenu("车道处理工具", self.search_action)
+            self.iface.addPluginToVectorMenu("车道处理工具", self.copy_action)
 
     def add_toolbar_button(self):
         """添加工具按钮到工具栏"""

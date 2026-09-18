@@ -31,7 +31,9 @@ class ReconstructController:
         self.actions = []
         self.log_lines = []
 
-    def initGui(self, actions_master):
+    def initGui(self, actions_master, register_action=True):
+        if not register_action:
+            return
         buttons = (
             (self.MODE_PREP, "准备三份数据", "icon_prepare_data.svg", "run"),
             (self.MODE_FULL, "一键重构(全程)", "icon_rebuild_all.svg", "run"),

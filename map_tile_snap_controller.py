@@ -53,7 +53,9 @@ class MapTileSnapController(QObject):
             return True
         return False
 
-    def initGui(self, actions_master):
+    def initGui(self, actions_master, register_action=True):
+        if not register_action:
+            return
         icon_path = os.path.join(self.plugin_dir, "icon_map_tile_snap.svg")
         self.action = QAction(QIcon(icon_path), "吸附到范围框", self.iface.mainWindow())
         self.action.setToolTip(

@@ -25,7 +25,9 @@ class LaneBoundaryJoinController:
         self.plugin_dir = plugin_dir
         self.action = None
 
-    def initGui(self, actions_master):
+    def initGui(self, actions_master, register_action=True):
+        if not register_action:
+            return
         icon_path = os.path.join(self.plugin_dir, "icon_lane_boundary_join.svg")
         self.action = QAction(QIcon(icon_path), "LANE/BOUNDARY 接边", self.iface.mainWindow())
         self.action.setToolTip(

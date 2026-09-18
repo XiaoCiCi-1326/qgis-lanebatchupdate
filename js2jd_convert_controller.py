@@ -17,7 +17,7 @@ class Js2jdConvertController:
         self.plugin_dir = plugin_dir
         self.log = log_callback if log_callback else print
 
-    def initGui(self, actions_list):
+    def initGui(self, actions_list, register_action=True):
         """注册到主插件的 actions 列表中（由主插件调用）"""
         pass
 
