@@ -463,6 +463,8 @@ class NewFeatureDialog(QDialog):
         self.feature = feature
         self.form = None
         self._preset_attributes = {}
+        self._manually_edited_fields = set()  # 【新增】跟踪用户手动编辑过的字段索引
+        self._manually_edited_values = {}  # 【关键修复】直接保存用户手动输入的值！
         self.preset_buttons = []
         self.preset_grid = None
         self.setWindowTitle(f"新增要素属性 - {layer.name()}")
@@ -509,6 +511,10 @@ class NewFeatureDialog(QDialog):
         context = QgsAttributeEditorContext()
         context.setAttributeFormMode(QgsAttributeEditorContext.SingleEditMode)
         self.form = QgsAttributeForm(self.layer, form_feature, context, parent=self)
+        
+        # 【新增】监听表单属性变化，跟踪用户手动编辑
+        self.form.attributeChanged.connect(self._on_attribute_changed)
+        
         self.form_scroll = QScrollArea(self)
         self.form_scroll.setWidgetResizable(True)
         self.form_scroll.setWidget(self.form)
@@ -541,6 +547,15 @@ class NewFeatureDialog(QDialog):
     def _apply_preset_and_accept(self, name):
         self.apply_preset(name)
         self.accept()
+    
+    def _on_attribute_changed(self, field_name, value):
+        """【新增】当用户手动修改字段时，记录该字段索引和值"""
+        index = self.layer.fields().indexFromName(field_name)
+        if index >= 0:
+            self._manually_edited_fields.add(index)
+            self._manually_edited_values[index] = value  # 【关键】直接保存值！
+            print(f"[DEBUG] 字段 {field_name} (索引 {index}) 被手动修改为: {value}")
+            print(f"[DEBUG] 当前手动编辑字段集合: {self._manually_edited_fields}")
 
     def apply_preset(self, name):
         try:
@@ -553,6 +568,9 @@ class NewFeatureDialog(QDialog):
                     self._preset_attributes[index] = value
                     # 同步到表单显示
                     self.form.changeAttribute(field_name, value)
+                    # 【关键】预设赋值不算手动编辑，从手动编辑集合中移除
+                    self._manually_edited_fields.discard(index)
+                    self._manually_edited_values.pop(index, None)  # 【新增】也清除保存的值
         except (RuntimeError, ValueError) as exc:
             QMessageBox.warning(self, "加载预设失败", str(exc))
 
@@ -584,41 +602,62 @@ class NewFeatureDialog(QDialog):
         new_feature.setId(unique_temp_id)  # 明确设置唯一 ID
         new_feature.setGeometry(QgsGeometry(self.feature.geometry()))
         
-        # 从表单读取属性，用 JSON 序列化来断开引用
+        # 【关键修复】正确的逻辑：
+        # 1. 用户手动编辑的字段，优先使用表单值（最高优先级）
+        # 2. 预设中的字段，如果用户没有手动编辑，使用预设值
+        # 3. 其他字段，使用表单默认值
+        
+        import json
         form_feature = self.form.feature()
-        if form_feature:
-            import json
-            # 将属性转为 JSON 再转回来，彻底断开引用
-            attrs = []
-            for i in range(self.layer.fields().count()):
-                value = form_feature.attribute(i)
-                # 通过 JSON 往返，断开 Qt 对象引用
+        
+        print(f"[DEBUG] === 开始保存要素 ===")
+        print(f"[DEBUG] 手动编辑字段集合: {self._manually_edited_fields}")
+        print(f"[DEBUG] 手动编辑值字典: {self._manually_edited_values}")
+        print(f"[DEBUG] 预设字段集合: {set(self._preset_attributes.keys())}")
+        
+        # 遍历所有字段，按优先级赋值
+        for i in range(self.layer.fields().count()):
+            field = self.layer.fields().at(i)
+            field_name = field.name()
+            
+            # 优先级1：用户手动编辑过的字段，使用信号时保存的值（最高优先级）
+            if i in self._manually_edited_values:
+                value = self._manually_edited_values[i]
+                print(f"[DEBUG] 字段 {field_name} (索引{i}): 手动编辑 → 保存的值 = {value}")
                 if value is None or value == NULL:
-                    attrs.append(None)
+                    new_feature.setAttribute(i, None)
                 else:
                     try:
-                        # 转为 JSON 可序列化的类型
-                        json_value = json.dumps(value)
-                        attrs.append(json.loads(json_value))
+                        value = json.loads(json.dumps(value))
+                        new_feature.setAttribute(i, value)
                     except:
-                        # 不能 JSON 序列化的，就用原始值
-                        attrs.append(value)
+                        new_feature.setAttribute(i, value)
             
-            # 逐字段设置
-            for i, value in enumerate(attrs):
+            # 优先级2：预设中的字段，且用户没有手动编辑
+            elif i in self._preset_attributes:
+                value = self._preset_attributes[i]
+                print(f"[DEBUG] 字段 {field_name} (索引{i}): 预设值 = {value}")
+                if value is not None and value != NULL:
+                    try:
+                        value = json.loads(json.dumps(value))
+                    except:
+                        pass
                 new_feature.setAttribute(i, value)
+            
+            # 优先级3：其他字段，使用表单默认值
+            elif form_feature:
+                value = form_feature.attribute(i)
+                print(f"[DEBUG] 字段 {field_name} (索引{i}): 默认表单值 = {value}")
+                if value is None or value == NULL:
+                    new_feature.setAttribute(i, None)
+                else:
+                    try:
+                        value = json.loads(json.dumps(value))
+                        new_feature.setAttribute(i, value)
+                    except:
+                        new_feature.setAttribute(i, value)
         
-        # 再应用预设属性（预设优先级最高，覆盖表单默认值）
-        for index, value in self._preset_attributes.items():
-            # 同样通过 JSON 断开引用
-            if value is not None and value != NULL:
-                try:
-                    import json
-                    json_value = json.dumps(value)
-                    value = json.loads(json_value)
-                except:
-                    pass
-            new_feature.setAttribute(index, value)
+        print(f"[DEBUG] === 保存完成 ===")
         
         # 【关键】添加要素前，确保图层处于编辑状态
         was_editable = self.layer.isEditable()
