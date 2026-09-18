@@ -116,6 +116,10 @@ class LaneBatchUpdateTool:
             self.run_check_dangling_points,
             self.run_check_overlapping_lines,
             self.run_check_lane_num,
+            self.run_check_lane_turn_type_filter,
+            self.run_check_lane_type_layer_filter,
+            self.run_check_lane_length_filter,
+            self.run_check_signal_type_status_filter,
         )
 
     def _load_toolbar_mode(self):
@@ -1359,6 +1363,147 @@ class LaneBatchUpdateTool:
             "车道工具", text, Qgis.Warning if records else Qgis.Info, duration=8
         )
 
+    def run_check_lane_turn_type_filter(self):
+        """检查 LANE 图层中符合 (TURN_TYPE>=1 and TURN_TYPE<9) and VIRTUAL<>9 的要素"""
+        lane_layer = self.get_project_layer("LANE")
+        if lane_layer is None:
+            QMessageBox.critical(None, "图层缺失", "请在 QGIS 中加载 LANE 图层")
+            return
+
+        fields, missing = self.resolve_field_map(lane_layer, ["ID", "TURN_TYPE", "VIRTUAL"])
+        if missing:
+            QMessageBox.critical(None, "字段缺失", "LANE 缺少字段：%s" % ", ".join(missing))
+            return
+
+        records = []
+        for feature in lane_layer.getFeatures():
+            turn_type = self.to_int(feature[fields["TURN_TYPE"]])
+            virtual = self.to_int(feature[fields["VIRTUAL"]])
+            
+            if turn_type is not None and virtual is not None:
+                if (turn_type >= 1 and turn_type < 9) and virtual != 9:
+                    lane_id = self.norm_id(feature[fields["ID"]]) or str(feature.id())
+                    records.append(
+                        {
+                            "type": "LANE转向类型过滤",
+                            "message": "LANE ID为 %s 的 TURN_TYPE=%d, VIRTUAL=%d (需TURN_TYPE>=1且<9且VIRTUAL<>9)" 
+                                % (lane_id, turn_type, virtual),
+                            "selections": {lane_layer.id(): [feature.id()]},
+                            "display_layers": {lane_layer.id(): lane_layer.name()},
+                            "display_ids": {lane_layer.id(): [lane_id]},
+                        }
+                    )
+        self.error_results.replace_records(records, "LANE转向类型过滤")
+        text = "LANE转向类型过滤完成：发现 %d 条符合条件的记录。" % len(records)
+        self.iface.messageBar().pushMessage(
+            "车道工具", text, Qgis.Warning if records else Qgis.Info, duration=8
+        )
+
+    def run_check_lane_type_layer_filter(self):
+        """检查 LANE 图层中符合 TYPE<11 and LAYER_NUM<>0 的要素"""
+        lane_layer = self.get_project_layer("LANE")
+        if lane_layer is None:
+            QMessageBox.critical(None, "图层缺失", "请在 QGIS 中加载 LANE 图层")
+            return
+
+        fields, missing = self.resolve_field_map(lane_layer, ["ID", "TYPE", "LAYER_NUM"])
+        if missing:
+            QMessageBox.critical(None, "字段缺失", "LANE 缺少字段：%s" % ", ".join(missing))
+            return
+
+        records = []
+        for feature in lane_layer.getFeatures():
+            lane_type = self.to_int(feature[fields["TYPE"]])
+            layer_num = self.to_int(feature[fields["LAYER_NUM"]])
+            
+            if lane_type is not None and layer_num is not None:
+                if lane_type < 11 and layer_num != 0:
+                    lane_id = self.norm_id(feature[fields["ID"]]) or str(feature.id())
+                    records.append(
+                        {
+                            "type": "LANE类型层次过滤",
+                            "message": "LANE ID为 %s 的 TYPE=%d, LAYER_NUM=%d (需TYPE>=11或LAYER_NUM=0)" 
+                                % (lane_id, lane_type, layer_num),
+                            "selections": {lane_layer.id(): [feature.id()]},
+                            "display_layers": {lane_layer.id(): lane_layer.name()},
+                            "display_ids": {lane_layer.id(): [lane_id]},
+                        }
+                    )
+        self.error_results.replace_records(records, "LANE类型层次过滤")
+        text = "LANE类型层次过滤完成：发现 %d 条符合条件的记录。" % len(records)
+        self.iface.messageBar().pushMessage(
+            "车道工具", text, Qgis.Warning if records else Qgis.Info, duration=8
+        )
+
+    def run_check_lane_length_filter(self):
+        """检查 LANE 图层中 LENGTH<1.5 的要素"""
+        lane_layer = self.get_project_layer("LANE")
+        if lane_layer is None:
+            QMessageBox.critical(None, "图层缺失", "请在 QGIS 中加载 LANE 图层")
+            return
+
+        fields, missing = self.resolve_field_map(lane_layer, ["ID", "LENGTH"])
+        if missing:
+            QMessageBox.critical(None, "字段缺失", "LANE 缺少字段：%s" % ", ".join(missing))
+            return
+
+        records = []
+        for feature in lane_layer.getFeatures():
+            length = self.to_float(feature[fields["LENGTH"]])
+            if length is not None and length < 1.5:
+                lane_id = self.norm_id(feature[fields["ID"]]) or str(feature.id())
+                records.append(
+                    {
+                        "type": "LANE长度过滤",
+                        "message": "LANE ID为 %s 的 LENGTH=%.2f (长度不得小于1.5)" 
+                            % (lane_id, length),
+                        "selections": {lane_layer.id(): [feature.id()]},
+                        "display_layers": {lane_layer.id(): lane_layer.name()},
+                        "display_ids": {lane_layer.id(): [lane_id]},
+                    }
+                )
+        self.error_results.replace_records(records, "LANE长度过滤")
+        text = "LANE长度过滤完成：发现 %d 条符合条件的记录。" % len(records)
+        self.iface.messageBar().pushMessage(
+            "车道工具", text, Qgis.Warning if records else Qgis.Info, duration=8
+        )
+
+    def run_check_signal_type_status_filter(self):
+        """检查 SIGNAL 图层中符合 TYPE=5 and STATUS<>0 的要素"""
+        signal_layer = self.get_project_layer("SIGNAL")
+        if signal_layer is None:
+            QMessageBox.critical(None, "图层缺失", "请在 QGIS 中加载 SIGNAL 图层")
+            return
+
+        fields, missing = self.resolve_field_map(signal_layer, ["ID", "TYPE", "STATUS"])
+        if missing:
+            QMessageBox.critical(None, "字段缺失", "SIGNAL 缺少字段：%s" % ", ".join(missing))
+            return
+
+        records = []
+        for feature in signal_layer.getFeatures():
+            signal_type = self.to_int(feature[fields["TYPE"]])
+            status = self.to_int(feature[fields["STATUS"]])
+            
+            if signal_type is not None and status is not None:
+                if signal_type == 5 and status != 0:
+                    signal_id = self.norm_id(feature[fields["ID"]]) or str(feature.id())
+                    records.append(
+                        {
+                            "type": "SIGNAL类型状态过滤",
+                            "message": "SIGNAL ID为 %s 的 TYPE=%d, STATUS=%d (需TYPE=5且STATUS<>0)" 
+                                % (signal_id, signal_type, status),
+                            "selections": {signal_layer.id(): [feature.id()]},
+                            "display_layers": {signal_layer.id(): signal_layer.name()},
+                            "display_ids": {signal_layer.id(): [signal_id]},
+                        }
+                    )
+        self.error_results.replace_records(records, "SIGNAL类型状态过滤")
+        text = "SIGNAL类型状态过滤完成：发现 %d 条符合条件的记录。" % len(records)
+        self.iface.messageBar().pushMessage(
+            "车道工具", text, Qgis.Warning if records else Qgis.Info, duration=8
+        )
+
     def fix_lane_num(self):
         lane_layer = self.get_project_layer("LANE")
         if lane_layer is None:
@@ -1449,6 +1594,15 @@ class LaneBatchUpdateTool:
             return default
         try:
             return int(float(value))
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def to_float(value, default=None):
+        if LaneBatchUpdateTool.is_empty(value):
+            return default
+        try:
+            return float(value)
         except (TypeError, ValueError):
             return default
 

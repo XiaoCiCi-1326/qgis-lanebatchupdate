@@ -75,6 +75,10 @@ class ErrorResultsController:
         self.dangling_point_checker = None
         self.overlapping_line_checker = None
         self.lane_num_checker = None
+        self.lane_turn_type_filter_checker = None
+        self.lane_type_layer_filter_checker = None
+        self.lane_length_filter_checker = None
+        self.signal_type_status_filter_checker = None
         self.clear_highlights_callback = None
         self.location_marker = None
         self._fix_log_path = None
@@ -182,6 +186,10 @@ class ErrorResultsController:
         dangling_point_checker=None,
         overlapping_line_checker=None,
         lane_num_checker=None,
+        lane_turn_type_filter_checker=None,
+        lane_type_layer_filter_checker=None,
+        lane_length_filter_checker=None,
+        signal_type_status_filter_checker=None,
     ):
         self.right_straight_checker = right_straight_checker
         self.boundary_checker = boundary_checker
@@ -192,6 +200,10 @@ class ErrorResultsController:
         self.dangling_point_checker = dangling_point_checker
         self.overlapping_line_checker = overlapping_line_checker
         self.lane_num_checker = lane_num_checker
+        self.lane_turn_type_filter_checker = lane_turn_type_filter_checker
+        self.lane_type_layer_filter_checker = lane_type_layer_filter_checker
+        self.lane_length_filter_checker = lane_length_filter_checker
+        self.signal_type_status_filter_checker = signal_type_status_filter_checker
         self.clear_highlights_callback = clear_highlights_callback
 
     def replace_records(self, records, record_type, title=None):
@@ -615,6 +627,10 @@ class ErrorResultsDialog(QDialog):
         self.dangling_point_rule = self._add_rule("BOUNDARY/LANE悬挂点检查")
         self.overlapping_line_rule = self._add_rule("BOUNDARY/LANE重合线检查")
         self.lane_num_rule = self._add_rule("LANE_NUM字段检测")
+        self.lane_turn_type_filter_rule = self._add_rule("LANE转向类型过滤 (TURN_TYPE>=1且<9且VIRTUAL<>9)")
+        self.lane_type_layer_filter_rule = self._add_rule("LANE类型层次过滤 (TYPE<11且LAYER_NUM<>0)")
+        self.lane_length_filter_rule = self._add_rule("LANE长度过滤 (LENGTH<1.5)")
+        self.signal_type_status_filter_rule = self._add_rule("SIGNAL类型状态过滤 (TYPE=5且STATUS<>0)")
         self.rules_list.currentItemChanged.connect(self._update_rule_options)
         self.rules_list.itemChanged.connect(self._update_selection_summary)
         rule_layout.addWidget(self.rules_list, 1)
@@ -895,6 +911,14 @@ class ErrorResultsDialog(QDialog):
             selected_rules.append(("BOUNDARY/LANE重合线检查", self.controller.overlapping_line_checker))
         if self.lane_num_rule.checkState() == Qt.Checked:
             selected_rules.append(("LANE_NUM字段检测", self.controller.lane_num_checker))
+        if self.lane_turn_type_filter_rule.checkState() == Qt.Checked:
+            selected_rules.append(("LANE转向类型过滤", self.controller.lane_turn_type_filter_checker))
+        if self.lane_type_layer_filter_rule.checkState() == Qt.Checked:
+            selected_rules.append(("LANE类型层次过滤", self.controller.lane_type_layer_filter_checker))
+        if self.lane_length_filter_rule.checkState() == Qt.Checked:
+            selected_rules.append(("LANE长度过滤", self.controller.lane_length_filter_checker))
+        if self.signal_type_status_filter_rule.checkState() == Qt.Checked:
+            selected_rules.append(("SIGNAL类型状态过滤", self.controller.signal_type_status_filter_checker))
         if not selected_rules:
             self._set_progress(0, "请至少选择一条规则。")
             self.rules_list.setFocus()
