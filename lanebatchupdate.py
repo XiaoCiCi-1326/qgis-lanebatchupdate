@@ -43,6 +43,7 @@ from .layer_tools_controller import LayerToolsController
 from .feature_visibility_controller import FeatureVisibilityController
 from .image_viewer_controller import ImageViewerController
 from .feature_relation_controller import FeatureRelationController
+from .safety_island_relation_controller import SafetyIslandRelationController
 
 
 class LaneBatchUpdateTool:
@@ -59,6 +60,7 @@ class LaneBatchUpdateTool:
     MODE_CLEAR_ALL_HIGHLIGHTS = "clear_all_highlights"
     MODE_JS2JD_CONVERT = "js2jd_convert"
     MODE_REFRESH_PROJECT = "refresh_project"
+    MODE_SAFETY_ISLAND_RELATION = "safety_island_relation"
 
     def __init__(self, iface):
         self.iface = iface
@@ -96,6 +98,7 @@ class LaneBatchUpdateTool:
         self.feature_visibility = FeatureVisibilityController(iface, self.plugin_dir)
         self.image_viewer = ImageViewerController(iface, self.plugin_dir)
         self.feature_relation = FeatureRelationController(iface)
+        self.safety_island_relation = SafetyIslandRelationController(iface, self.plugin_dir)
         
         # 连接状态信号
         self.feature_relation.status_changed.connect(
@@ -308,6 +311,7 @@ class LaneBatchUpdateTool:
             (self.MODE_MESH_MAP_TILE_ID, "MESH=n / MAP_TILE.ID=n（覆盖）", "icon_mesh_map_tile_id.svg"),
             (self.MODE_AUTO_SIMPLIFY, "自动抽稀", "icon_simplify.svg"),
             (self.MODE_SIMPLIFY_SELECTED, "选中抽稀", "icon_simplify_selected.svg"),
+            (self.MODE_SAFETY_ISLAND_RELATION, "自动关联安全岛", "icon_safety_island_relation.svg"),
         ):
             action = QAction(QIcon(os.path.join(self.plugin_dir, icon_name)), label, parent)
             action.triggered.connect(lambda *args, m=mode: self.run(mode=m))
@@ -2531,6 +2535,10 @@ class LaneBatchUpdateTool:
 
         if mode == self.MODE_JS2JD_CONVERT:
             self.js2jd_convert.run()
+            return
+        
+        if mode == self.MODE_SAFETY_ISLAND_RELATION:
+            self.safety_island_relation.run()
             return
         
         if mode == self.MODE_AUTO_SIMPLIFY:
