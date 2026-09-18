@@ -152,27 +152,27 @@ class LaneBatchUpdateTool:
             self.iface.addPluginToVectorMenu("车道处理工具", action)
             self.actions.append(action)
         
-        self.reconstruct.initGui(self.actions, register_action=False)
-        self.lane_fix.initGui(self.actions, register_action=False)
-        self.excel_preview.initGui(self.actions, register_action=False)
-        self.inertial_follow.initGui(self.actions, register_action=False)
-        self.map_tile_snap.initGui(self.actions, register_action=False)
-        self.lane_stopline_snap.initGui(self.actions, register_action=False)
-        self.lane_boundary_join.initGui(self.actions, register_action=False)
-        self.aligned_split.initGui(self.actions, register_action=False)
-        self.attribute_preset.initGui(self.actions, register_action=False)
-        self.boundary_length.initGui(self.actions, register_action=False)
-        self.raster_pyramid.initGui(self.actions, register_action=False)
-        self.raster_compress.initGui(self.actions, register_action=False)
-        self.raster_tile_loader.initGui(self.actions, register_action=False)
-        self.js2jd_convert.initGui(self.actions, register_action=False)
-        self.filename_search.initGui(self.actions, register_action=False)
-        self.jdchecker.initGui(self.actions, register_action=False)
-        self.shpchecker.initGui(self.actions, self.jdchecker.action, register_action=False)
-        self.layer_tools.initGui(self.actions, register_action=False)
-        self.feature_visibility.initGui(self.actions, register_action=False)
-        self.image_viewer.initGui(self.actions, register_action=False)
-        self.feature_relation.initGui(self.actions, register_action=False)
+        self.reconstruct.initGui(self.actions)
+        self.lane_fix.initGui(self.actions)
+        self.excel_preview.initGui(self.actions)
+        self.inertial_follow.initGui(self.actions)
+        self.map_tile_snap.initGui(self.actions)
+        self.lane_stopline_snap.initGui(self.actions)
+        self.lane_boundary_join.initGui(self.actions)
+        self.aligned_split.initGui(self.actions)
+        self.attribute_preset.initGui(self.actions)
+        self.boundary_length.initGui(self.actions)
+        self.raster_pyramid.initGui(self.actions)
+        self.raster_compress.initGui(self.actions)
+        self.raster_tile_loader.initGui(self.actions)
+        self.js2jd_convert.initGui(self.actions)
+        self.filename_search.initGui(self.actions)
+        self.jdchecker.initGui(self.actions)
+        self.shpchecker.initGui(self.actions, self.jdchecker.action)
+        self.layer_tools.initGui(self.actions)
+        self.feature_visibility.initGui(self.actions)
+        self.image_viewer.initGui(self.actions)
+        self.feature_relation.initGui(self.actions)
         self._create_attribute_fill_button()
 
         # 根据保存的模式初始化工具栏布局
@@ -216,9 +216,9 @@ class LaneBatchUpdateTool:
             ) or action.text() in ("限速刷值", "ROAD_TYPE=2", "转向个数刷值"):
                 # 刷值功能统一由一个下拉 QToolButton 承载。
                 continue
-            # feature_relation.assign_action 已包含在自定义下拉按钮中，不需要单独添加
-            if action is self.feature_relation.assign_action:
-                continue
+            # feature_relation 下拉按钮中只包含自动关联和配置，赋值按钮需要单独显示
+            # if action is self.feature_relation.assign_action:
+            #     continue
             if action is self.filename_search.search_action:
                 self.filename_search.add_toolbar_button()
             else:
