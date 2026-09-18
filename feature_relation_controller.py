@@ -816,9 +816,19 @@ class RelationAssignDialog(QDialog):
         if not lane_features:
             return
         
+        # 重新从图层获取最新的要素数据
+        refreshed_features = []
+        for feature in lane_features:
+            fresh_feature = self.lane_layer.getFeature(feature.id())
+            if fresh_feature.isValid():
+                refreshed_features.append(fresh_feature)
+        
+        if not refreshed_features:
+            return
+        
         # 如果只选中一个 LANE，直接显示它的字段值
-        if len(lane_features) == 1:
-            feature = lane_features[0]
+        if len(refreshed_features) == 1:
+            feature = refreshed_features[0]
             for field_name, list_widget in self.field_widgets.items():
                 list_widget.clear()
                 field_value = feature.attribute(field_name)
@@ -830,7 +840,7 @@ class RelationAssignDialog(QDialog):
             # 如果选中多个 LANE，显示它们的并集
             for field_name, list_widget in self.field_widgets.items():
                 all_ids = set()
-                for feature in lane_features:
+                for feature in refreshed_features:
                     field_value = feature.attribute(field_name)
                     if field_value and str(field_value).strip().upper() not in ('NULL', 'NONE', ''):
                         all_ids.update(self._parse_ids(field_value))
@@ -838,6 +848,21 @@ class RelationAssignDialog(QDialog):
                 list_widget.clear()
                 for id_val in sorted(all_ids, key=lambda x: int(x) if x.isdigit() else x):
                     list_widget.addItem(id_val)
+    
+    def _refresh_current_lane_features(self):
+        """刷新 current_lane_features 以获取最新的字段值"""
+        if not self.current_lane_features:
+            return
+        
+        # 获取当前要素的 ID 列表
+        feature_ids = [f.id() for f in self.current_lane_features]
+        
+        # 重新从图层获取这些要素
+        self.current_lane_features = []
+        for fid in feature_ids:
+            feature = self.lane_layer.getFeature(fid)
+            if feature.isValid():
+                self.current_lane_features.append(feature)
     
     def _highlight_boundary(self, item, field_name):
         """高亮指定 ID 的 BOUNDARY 要素"""
@@ -1028,6 +1053,7 @@ class RelationAssignDialog(QDialog):
             return
         
         try:
+            self.is_updating = True  # 设置更新标志
             for feature in selected_lane_features:
                 # 获取当前字段值
                 current_value = feature.attribute(field_name)
@@ -1046,6 +1072,9 @@ class RelationAssignDialog(QDialog):
                 # 更新字段值
                 self.lane_layer.changeAttributeValue(feature.id(), field_idx, new_value)
             
+            # 刷新 current_lane_features 以获取最新数据
+            self._refresh_current_lane_features()
+            
             # 刷新右侧显示
             self._update_field_lists_for_lanes(selected_lane_features)
             
@@ -1054,6 +1083,8 @@ class RelationAssignDialog(QDialog):
                     len(self.boundary_ids), len(selected_lane_features), field_name))
         except Exception as e:
             QMessageBox.critical(self, "错误", "添加失败：{}".format(str(e)))
+        finally:
+            self.is_updating = False  # 清除更新标志
     
     def _remove_selected_ids(self, field_name, list_widget):
         """删除选中的 BOUNDARY ID"""
@@ -1089,6 +1120,7 @@ class RelationAssignDialog(QDialog):
             return
         
         try:
+            self.is_updating = True  # 设置更新标志
             for feature in selected_lane_features:
                 # 获取当前字段值
                 current_value = feature.attribute(field_name)
@@ -1108,6 +1140,9 @@ class RelationAssignDialog(QDialog):
                 # 更新字段值
                 self.lane_layer.changeAttributeValue(feature.id(), field_idx, new_value)
             
+            # 刷新 current_lane_features 以获取最新数据
+            self._refresh_current_lane_features()
+            
             # 刷新右侧显示
             self._update_field_lists_for_lanes(selected_lane_features)
             
@@ -1116,6 +1151,8 @@ class RelationAssignDialog(QDialog):
                     len(selected_lane_features), field_name, len(ids_to_remove)))
         except Exception as e:
             QMessageBox.critical(self, "错误", "删除失败：{}".format(str(e)))
+        finally:
+            self.is_updating = False  # 清除更新标志
     
     def _clear_ids(self, field_name, list_widget):
         """清空所有 BOUNDARY ID"""
@@ -1154,8 +1191,12 @@ class RelationAssignDialog(QDialog):
             return
         
         try:
+            self.is_updating = True  # 设置更新标志
             for feature in selected_lane_features:
                 self.lane_layer.changeAttributeValue(feature.id(), field_idx, None)
+            
+            # 刷新 current_lane_features 以获取最新数据
+            self._refresh_current_lane_features()
             
             # 刷新右侧显示
             self._update_field_lists_for_lanes(selected_lane_features)
@@ -1165,6 +1206,8 @@ class RelationAssignDialog(QDialog):
                     len(selected_lane_features), field_name))
         except Exception as e:
             QMessageBox.critical(self, "错误", "清空失败：{}".format(str(e)))
+        finally:
+            self.is_updating = False  # 清除更新标志
     
     def _sort_list(self, list_widget):
         """对列表进行排序"""
