@@ -37,6 +37,7 @@ RELEASE_FILES = (
     "icon_speed.png",
     "icon_road2.png",
     "icon_virtual.png",
+    "icon_group_lanes.svg",
     "icon_mesh_map_tile_id.svg",
     "icon_simplify.svg",
     "icon_simplify_selected.svg",

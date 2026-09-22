@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-车道批量刷值工具 v1.0.4.26
+车道批量刷值工具 v1.0.4.97
 规则来源：更新日志.txt / UpdateShpLane.exe
 
 按钮：
@@ -61,6 +61,7 @@ class LaneBatchUpdateTool:
     MODE_JS2JD_CONVERT = "js2jd_convert"
     MODE_REFRESH_PROJECT = "refresh_project"
     MODE_SAFETY_ISLAND_RELATION = "safety_island_relation"
+    MODE_GROUP_LANES = "group_lanes"
 
     def __init__(self, iface):
         self.iface = iface
@@ -316,6 +317,7 @@ class LaneBatchUpdateTool:
             (self.MODE_AUTO_SIMPLIFY, "自动抽稀", "icon_simplify.svg"),
             (self.MODE_SIMPLIFY_SELECTED, "选中抽稀", "icon_simplify_selected.svg"),
             (self.MODE_SAFETY_ISLAND_RELATION, "自动关联安全岛", "icon_safety_island_relation.svg"),
+            (self.MODE_GROUP_LANES, "刷成一组", "icon_group_lanes.svg"),
         ):
             action = QAction(QIcon(os.path.join(self.plugin_dir, icon_name)), label, parent)
             action.triggered.connect(lambda *args, m=mode: self.run(mode=m))
@@ -2757,6 +2759,9 @@ class LaneBatchUpdateTool:
             elif mode == self.MODE_SHOW_ERROR_RESULTS:
                 self.show_error_results()
                 return
+            elif mode == self.MODE_GROUP_LANES:
+                self.run_group_lanes()
+                return
             elif mode == self.MODE_CLEAR_ALL_HIGHLIGHTS:
                 self.clear_all_highlights()
                 self.iface.mapCanvas().refresh()
@@ -2775,3 +2780,164 @@ class LaneBatchUpdateTool:
             "执行完成",
             f"{done_text}\n数据目录：{self.shp_dir}\n日志：{log_hint}",
         )
+
+    def run_group_lanes(self):
+        """
+        将选中的 LANE 要素刷成一组。
+        
+        逻辑：
+        1. 选中多条 LANE 要素
+        2. 每条 LANE 有 RBDY_R 字段，指向对应的 BOUNDARY 要素 ID（支持多个ID，如 "1|2|3"）
+        3. 计算每条 LANE 到其所有关联 BOUNDARY 的最小距离
+        4. 距离最远的 LANE 要素 ID 作为这组的 ROAD_ID
+        5. SECTION_NO 按距离排序：最远=1，次远=2，再次=3
+        """
+        # 获取 LANE 图层
+        lane_layer = self.get_project_layer("LANE")
+        if lane_layer is None:
+            QMessageBox.critical(None, "图层缺失", "请在 QGIS 中加载 LANE 图层")
+            return
+        
+        # 检查字段
+        fields_needed = ["ID", "RBDY_R", "ROAD_ID", "SECTION_NO", "LANE_NUM"]
+        fields, missing = self.resolve_field_map(lane_layer, fields_needed)
+        if missing:
+            QMessageBox.critical(None, "字段缺失", "LANE 缺少字段：%s" % ", ".join(missing))
+            return
+        
+        # 获取 BOUNDARY 图层
+        boundary_layer = self.get_project_layer("BOUNDARY")
+        if boundary_layer is None:
+            QMessageBox.critical(None, "图层缺失", "请在 QGIS 中加载 BOUNDARY 图层")
+            return
+        
+        # 检查 BOUNDARY 的 ID 字段
+        bdy_fields, bdy_missing = self.resolve_field_map(boundary_layer, ["ID"])
+        if bdy_missing:
+            QMessageBox.critical(None, "字段缺失", "BOUNDARY 缺少字段：%s" % ", ".join(bdy_missing))
+            return
+        
+        # 获取选中的要素
+        selected_features = lane_layer.selectedFeatures()
+        if len(selected_features) < 2:
+            QMessageBox.warning(None, "选中的要素不足", "请选中至少 2 条 LANE 要素进行分组")
+            return
+        
+        # 解析每个选中要素的 RBDY_R，找到对应的 BOUNDARY，计算距离
+        id_field = fields["ID"]
+        rbdy_r_field = fields["RBDY_R"]
+        road_id_field = fields["ROAD_ID"]
+        section_no_field = fields["SECTION_NO"]
+        bdy_id_field = bdy_fields["ID"]
+        
+        # 构建 BOUNDARY ID 到要素的映射
+        boundary_features = {}
+        for f in boundary_layer.getFeatures():
+            bdy_id = self.norm_id(f[bdy_id_field])
+            if bdy_id:
+                boundary_features[bdy_id] = f
+        
+        # 计算每条 LANE 到其对应 BOUNDARY 的距离
+        lane_distances = []
+        for lane_feat in selected_features:
+            lane_id = self.norm_id(lane_feat[id_field])
+            rbdy_r_value = lane_feat[rbdy_r_field]
+            rbdy_r_ids = self.split_ids(rbdy_r_value)  # 支持 "1|2|3" 格式
+            
+            # 获取 LANE 的几何
+            geom = lane_feat.geometry()
+            if geom is None or geom.isEmpty():
+                continue
+            
+            # 如果有多个 RBDY_R，计算到所有关联 BOUNDARY 的最小距离
+            min_distance = None
+            for rbdy_id in rbdy_r_ids:
+                if rbdy_id in boundary_features:
+                    bdy_feat = boundary_features[rbdy_id]
+                    bdy_geom = bdy_feat.geometry()
+                    if bdy_geom and not bdy_geom.isEmpty():
+                        distance = geom.distance(bdy_geom)
+                        if min_distance is None or distance < min_distance:
+                            min_distance = distance
+            
+            if min_distance is not None:
+                lane_distances.append({
+                    "feature": lane_feat,
+                    "lane_id": lane_id,
+                    "distance": min_distance,
+                    "rbdy_r": rbdy_r_value,  # 保留原始值用于显示
+                })
+        
+        if len(lane_distances) < 2:
+            QMessageBox.warning(
+                None, 
+                "数据不足", 
+                "至少有 2 条 LANE 需要有有效的 RBDY_R 关联\n\n"
+                "当前有效数据：%d 条\n"
+                "请检查：\n"
+                "1. RBDY_R 字段是否有值\n"
+                "2. RBDY_R 引用的 BOUNDARY ID 是否存在" % len(lane_distances)
+            )
+            return
+        
+        # 按距离降序排序（最远的在前）
+        lane_distances.sort(key=lambda x: x["distance"], reverse=True)
+        
+        # 距离最远的 LANE 的 ID 作为 ROAD_ID
+        road_id = lane_distances[0]["lane_id"]
+        
+        # LANE_NUM 为这组的总数量（与"修复LANE_NUM"按钮逻辑一致）
+        lane_num = len(lane_distances)
+        
+        # 开始编辑
+        lane_layer.beginEditCommand("刷成一组")
+        updated_count = 0
+        
+        try:
+            for idx, item in enumerate(lane_distances):
+                lane_feat = item["feature"]
+                # SECTION_NO 从 1 开始，距离最远的为 1
+                section_no = idx + 1
+                
+                # 更新字段
+                lane_layer.changeAttributeValue(
+                    lane_feat.id(), 
+                    lane_layer.fields().indexFromName("ROAD_ID"), 
+                    road_id
+                )
+                lane_layer.changeAttributeValue(
+                    lane_feat.id(), 
+                    lane_layer.fields().indexFromName("SECTION_NO"), 
+                    section_no
+                )
+                lane_layer.changeAttributeValue(
+                    lane_feat.id(), 
+                    lane_layer.fields().indexFromName("LANE_NUM"), 
+                    lane_num
+                )
+                updated_count += 1
+            
+            lane_layer.endEditCommand()
+            lane_layer.triggerRepaint()
+            
+            # 按距离显示结果
+            detail_lines = []
+            for idx, item in enumerate(lane_distances):
+                detail_lines.append(
+                    "  第%d远: LANE ID=%s, RBDY_R=%s, 距离=%.2f, SECTION_NO=%d" 
+                    % (idx + 1, item["lane_id"], item["rbdy_r"], item["distance"], idx + 1)
+                )
+            detail_text = "\n".join(detail_lines)
+            
+            QMessageBox.information(
+                None,
+                "刷成一组完成",
+                "已更新 %d 条 LANE 记录\n\n"
+                "ROAD_ID = %s（距离最远的 LANE ID）\n"
+                "LANE_NUM = %d（这组的总数量）\n\n"
+                "详细排序：\n%s" % (updated_count, road_id, lane_num, detail_text)
+            )
+            
+        except Exception as e:
+            lane_layer.endEditCommand()
+            QMessageBox.critical(None, "刷值失败", str(e))
