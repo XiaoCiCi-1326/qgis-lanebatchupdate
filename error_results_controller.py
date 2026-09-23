@@ -361,10 +361,17 @@ class ErrorResultsController:
             layer = str(get(row, ("LAYER", "图层", "错误图层")) or "").strip()
             feature_id = str(get(row, ("FEATUREID", "FEATURE_ID", "要素ID", "要素")) or "").strip()
             if not layer:
-                layer_match = re.search(r"\b(LANE(?:_MARKING|_GROUP|_NODE)?|ROAD_LINK|INTERSECTION|TRAFFICLIGHT|SIGNAL)\b", detail, re.I)
+                # 用 ASCII 词边界，避免中文上下文里 "路口lane" 匹配不到 LANE
+                layer_match = re.search(
+                    r"(?<![A-Za-z0-9_])(LANE(?:_MARKING|_GROUP|_NODE)?|ROAD_LINK|INTERSECTION|TRAFFICLIGHT|SIGNAL)(?![A-Za-z0-9_])",
+                    detail, re.I,
+                )
                 layer = layer_match.group(1).upper() if layer_match else ""
             if not feature_id:
-                id_match = re.search(r"(?:LANEID|LINKID|FEATUREID|ID)\s*[=:：]?\s*(\d{6,})", detail, re.I)
+                id_match = re.search(
+                    r"(?:LANEID|LINKID|FEATUREID|(?<![A-Za-z0-9_])ID)\s*[=:：]?\s*(\d{6,})",
+                    detail, re.I,
+                )
                 if not id_match:
                     id_match = re.search(r"\b(\d{6,})\b", detail)
                 feature_id = id_match.group(1) if id_match else ""
@@ -392,33 +399,55 @@ class ErrorResultsController:
         display_ids = {}
         display_layers = {}
 
-        def add_selection(source_name, raw_ids):
-            target_name = layer_names.get(str(source_name or "").strip().upper(), str(source_name or "").strip().upper())
+        def add_selection(source_name, raw_ids, fallbacks=None):
+            """记录一次可选中项。
+
+            - source_name 非空：尝试唯一图层，命中即记录；找不到时也记录占位便于诊断。
+            - source_name 为空：按 fallbacks 顺序逐个图层查找，命中即停止，
+              避免把同一个 ID 同时挂在多个图层下误导用户。
+            """
+            target_names = []
+            if source_name:
+                target_names.append(layer_names.get(str(source_name).strip().upper(), str(source_name).strip().upper()))
+            else:
+                target_names.extend(fallbacks or [])
             ids = [
                 item.strip().strip("'\"")
                 for item in re.split(r"[,;|]", str(raw_ids or ""))
                 if item.strip().strip("'\"")
             ]
-            if not target_name or not ids:
+            if not target_names or not ids:
                 return
-            layer = ErrorResultsController._find_vector_layer(target_name)
-            feature_ids = []
-            if layer is not None:
-                field_names = {field.name().upper(): field.name() for field in layer.fields()}
-                id_field = field_names.get("ID")
-                if id_field:
-                    wanted = set(ids)
-                    for feature in layer.getFeatures():
-                        value = str(feature[id_field]).strip()
-                        if value in wanted:
-                            feature_ids.append(feature.id())
-                else:
-                    feature_ids = [int(value) for value in ids if value.lstrip("-").isdigit()]
-            display_key = layer.id() if layer is not None else target_name
-            display_ids[display_key] = ids
-            display_layers[display_key] = layer.name() if layer is not None else target_name
-            if feature_ids and layer is not None:
-                selections[layer.id()] = list(dict.fromkeys(feature_ids))
+            for target_name in target_names:
+                layer = ErrorResultsController._find_vector_layer(target_name)
+                feature_ids = []
+                if layer is not None:
+                    field_names = {field.name().upper(): field.name() for field in layer.fields()}
+                    id_field = field_names.get("ID")
+                    if id_field:
+                        wanted = set(ids)
+                        for feature in layer.getFeatures():
+                            value = str(feature[id_field]).strip()
+                            if value in wanted:
+                                feature_ids.append(feature.id())
+                    else:
+                        feature_ids = [int(value) for value in ids if value.lstrip("-").isdigit()]
+                if not source_name and not feature_ids:
+                    # 兜底模式：按顺序尝试下一个图层，不在空命中图层上登记占位
+                    continue
+                display_key = layer.id() if layer is not None else target_name
+                display_ids[display_key] = list(
+                    dict.fromkeys(display_ids.get(display_key, []) + ids)
+                )
+                display_layers[display_key] = layer.name() if layer is not None else target_name
+                if feature_ids and layer is not None:
+                    selections[layer.id()] = list(
+                        dict.fromkeys(selections.get(layer.id(), []) + feature_ids)
+                    )
+                # 显式 source_name 时不论是否命中都登记一次，方便后续诊断
+                if source_name:
+                    continue
+                break
 
         add_selection(primary_layer, data.get("FEATUREID"))
         add_selection(data.get("REF_LAYER_1"), data.get("RL_1_FIELD_1_IS"))
@@ -428,16 +457,41 @@ class ErrorResultsController:
         # in the free-text description, e.g. intersection=..., signal=...,
         # lane: .... Parse each reference so one click selects every element.
         text = " ".join(str(data.get(key) or "") for key in ("DETAIL", "MESSAGE", "ERROR", "FEATUREID"))
+        # 注意：必须用 ASCII 词边界 (?<![A-Za-z0-9_]) / (?![A-Za-z0-9_])
+        # 替代 \b。Python 3 的 \b 是 Unicode-aware 的，中文字符也算 \w，
+        # 会导致 `\blane` 在 "路口lane挂接缺失" 这种中文上下文里匹配失败。
+        #
+        # 业务约定：本项目里 `linkid=` / `link_id=` 实际上指的就是
+        # LANE 图层的 ID（车道挂接关系里 linkid 字段等价于车道 ID），
+        # 所以这里把 linkid 归到 LANE，而不是 ROAD_LINK。
         reference_patterns = (
-            ("INTERSECTION", r"\bintersection\s*[=:：]\s*(\d+)"),
-            ("SIGNAL", r"\bsignal\s*[=:：]\s*(\d+)"),
-            ("LANE", r"\blane\s*[=:：]\s*(\d+)"),
-            ("ROAD", r"\broad[_ ]?link\s*[=:：]\s*(\d+)"),
+            ("INTERSECTION", r"(?<![A-Za-z0-9_])intersection\s*[=:：]\s*(\d+)\b"),
+            ("SIGNAL", r"(?<![A-Za-z0-9_])signal\s*[=:：]\s*(\d+)\b"),
+            ("LANE", r"(?<![A-Za-z0-9_])lane[_\s]*id\s*[=:：]?\s*(\d+)\b"),
+            ("LANE", r"(?<![A-Za-z0-9_])lane\s*[=:：]\s*(\d+)\b"),
+            # 中文上下文里 lane 后面常不写 = 或 :，例如 "路口lane挂接缺失:4034636"
+            ("LANE", r"(?<![A-Za-z0-9_])lane[^\d,，;；。]{0,16}(\d{6,})"),
+            # "挂接缺失:4034636" / "挂接多余[lane:4030675]"
+            ("LANE", r"挂接[缺失错误多余]*[^\d,，;；。]{0,12}(\d{6,})"),
+            ("ROAD", r"(?<![A-Za-z0-9_])road[_\s]*link\s*[=:：]\s*(\d+)\b"),
+            # "linkid=4034640" / "link_id:4034640" 业务上指 LANE.ID
+            ("LANE", r"(?<![A-Za-z0-9_])link[_\s]*id\s*[=:：]?\s*(\d+)\b"),
         )
         for target_name, pattern in reference_patterns:
             ids = re.findall(pattern, text, re.IGNORECASE)
             if ids:
                 add_selection(target_name, "|".join(ids))
+        # 兜底：剩余未被识别的 6+ 位纯数字，按 LANE → ROAD → SIGNAL → INTERSECTION
+        # 顺序查找（比如 "linkid=4034640 路口lane挂接缺失:4034636" 既要把 4034636
+        # 当 lane 选，也要把 4034640 在 LANE 里试着定位一下）。
+        covered = {value for values in display_ids.values() for value in values}
+        # 这里必须用 ASCII 数字边界 (?<![0-9]) / (?![0-9])：Python 3 的 \b
+        # 把中文字符也当成 \w，会让 "车道4030501" 里的 4030501 也漏掉。
+        for match in re.finditer(r"(?<![0-9])(\d{6,})(?![0-9])", text):
+            value = match.group(1)
+            if value in covered:
+                continue
+            add_selection(None, value, fallbacks=("LANE", "ROAD", "SIGNAL", "INTERSECTION"))
         rule = str(data.get("RULENO") or "").strip()
         level = str(data.get("ERRORLEVEL") or "").strip()
         return {

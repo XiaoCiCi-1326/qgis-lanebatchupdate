@@ -1,5 +1,11 @@
 # 更新日志
 
+## v1.0.4.98
+- 修复「全部规则」错误记录点击无法定位的问题：原 `\b` 词边界在 Python 3 Unicode 模式下会把中文当 `\w`，导致 `路口lane挂接缺失:4034636` / `不应挂接lane:4030675` 里的 lane ID 无法匹配。
+- 词边界改用 ASCII 版 `(?<![A-Za-z0-9_])…(?![A-Za-z0-9_])`，并新增 `lane_id` / `linkid` / `link_id` / `挂接缺失:N` 等显式模式。
+- 业务约定：`linkid=` / `link_id=` 在本项目里指 LANE.ID（不再归到 ROAD）。
+- 兜底逻辑按 `LANE → ROAD → SIGNAL → INTERSECTION` 顺序尝试，命中即停，避免同一 ID 同时挂在多个图层下。
+
 ## v1.0.4.73
 - 增加 3.16 扳手错后台质检：在 QGIS 3.28 中启动独立 QGIS 3.16 子进程，避免 shpchecker 编译扩展版本冲突。
 - 发布包内置 shpchecker 编译扩展，自动加载转换目录中的 17 个 SHP 和 2 个关系 DBF。
