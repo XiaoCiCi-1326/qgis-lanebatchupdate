@@ -107,7 +107,8 @@ class ErrorResultsController:
                 str(source.get(key) or "")
                 for key in ("LAYER", "FEATUREID", "LANEMARKID", "MARKTYPE", "DETAIL")
             )
-            parsed = parse_error_texts(combined)
+            # 联动【问题#1】↔【问题#6】需要 LANE 图层查 TURN_TYPE
+            parsed = parse_error_texts(combined, lane_layer=self._find_vector_layer("LANE"))
             self._log(
                 "质检原始字段: LAYER=%r FEATUREID=%r LANEMARKID=%r MARKTYPE=%r DETAIL=%r"
                 % (source.get("LAYER"), source.get("FEATUREID"), source.get("LANEMARKID"), source.get("MARKTYPE"), detail),

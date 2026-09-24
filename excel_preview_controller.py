@@ -120,8 +120,11 @@ class ExcelPreviewController:
 
     # ---------- 解析 + 行号 ----------
 
-    def _parse_with_rows(self, path: str) -> List[LaneFixAction]:
-        """与 parse_fix_actions 等价，但每个 action 附带 source_text 所在 Excel 行号。"""
+    def _parse_with_rows(self, path: str, lane_layer=None) -> List[LaneFixAction]:
+        """与 parse_fix_actions 等价，但每个 action 附带 source_text 所在 Excel 行号。
+
+        lane_layer: 用于驱动【问题#1】↔【问题#6】联动（TURN_TYPE=4 时前置 fill_from_neighbor_rbdy）。
+        """
         rows = load_table_rows(path)
         actions: List[LaneFixAction] = []
         seen = set()
@@ -150,7 +153,7 @@ class ExcelPreviewController:
                 ]
 
             for desc in problem_cells:
-                for action in parse_error_texts(desc):
+                for action in parse_error_texts(desc, lane_layer=lane_layer):
                     action.excel_row = row_idx
                     key = (
                         action.action,
@@ -177,6 +180,9 @@ class ExcelPreviewController:
         road_layer, layer_candidates = self._find_exact_road_layer()
         roadlink_layer = self._get_layer_by_name("ROAD_LINK")
         signal_layer = self._get_layer_by_name("SIGNAL")
+        # 【问题#6】邻居 LANE 补充 RBDY 需要 LANE_NODE 与 BOUNDARY 图层
+        lane_node_layer = self._get_layer_by_name("LANE_NODE")
+        boundary_layer = self._get_layer_by_name("BOUNDARY")
 
         excel_path, _ = QFileDialog.getOpenFileName(
             self.iface.mainWindow(),
@@ -207,9 +213,17 @@ class ExcelPreviewController:
             self._log(f"ROAD_LINK 图层: {roadlink_layer.name()}", show_bar=False)
         if signal_layer:
             self._log(f"SIGNAL 图层: {signal_layer.name()}", show_bar=False)
+        if lane_node_layer:
+            self._log(f"LANE_NODE 图层: {lane_node_layer.name()}", show_bar=False)
+        else:
+            self._log("LANE_NODE 图层未加载，「边线数量不足」将无法自动补充", level="WARN", show_bar=False)
+        if boundary_layer:
+            self._log(f"BOUNDARY 图层: {boundary_layer.name()}", show_bar=False)
+        else:
+            self._log("BOUNDARY 图层未加载，「边线数量不足」将无法自动补充", level="WARN", show_bar=False)
 
         try:
-            all_actions = self._parse_with_rows(excel_path)
+            all_actions = self._parse_with_rows(excel_path, lane_layer=lane_layer)
         except Exception as exc:
             self._log(traceback.format_exc(), level="ERROR", show_bar=False)
             QMessageBox.critical(None, "解析失败", f"{exc}")
@@ -243,6 +257,8 @@ class ExcelPreviewController:
                     road_layer,
                     roadlink_layer,
                     signal_layer,
+                    lane_node_layer,
+                    boundary_layer,
                 ),
             )
             progress.close()
@@ -273,6 +289,8 @@ class ExcelPreviewController:
         road_layer: Optional[QgsVectorLayer],
         roadlink_layer: Optional[QgsVectorLayer],
         signal_layer: Optional[QgsVectorLayer],
+        lane_node_layer: Optional[QgsVectorLayer] = None,
+        boundary_layer: Optional[QgsVectorLayer] = None,
     ) -> Optional[Dict]:
         if not selected:
             return None
@@ -295,6 +313,8 @@ class ExcelPreviewController:
                     self._log,
                     dry_run=dry_run,
                     road_layer=road_layer,
+                    lane_node_layer=lane_node_layer,
+                    boundary_layer=boundary_layer,
                 )
                 stats["LANE"] = engine.apply_all(lane_actions)
                 lane_layer.triggerRepaint()

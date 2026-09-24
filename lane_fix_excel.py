@@ -58,6 +58,50 @@ def _extract_link_id(compact: str) -> Optional[str]:
     return None
 
 
+def _lookup_lane_turn_type(lane_layer, lane_id: str):
+    """查 LANE 图层里指定 lane_id 的 TURN_TYPE 字段值。
+
+    - lane_id 找不到 → 返回 None
+    - 字段不在图层里 → 返回 None
+    - 找到了 → 返回 int（无法转换则原样返回）
+
+    字段名按 TURN_TYPE / TURNTYPE / turn_type 顺序回退。
+    """
+    if lane_layer is None or not lane_id:
+        return None
+    try:
+        fields = lane_layer.fields()
+    except Exception:
+        return None
+
+    id_field = None
+    for alias in ("ID", "LANE_ID", "LANEID", "id"):
+        if fields.indexFromName(alias) >= 0:
+            id_field = alias
+            break
+    if id_field is None:
+        return None
+
+    turn_idx = -1
+    for alias in ("TURN_TYPE", "TURNTYPE", "turn_type"):
+        turn_idx = fields.indexFromName(alias)
+        if turn_idx >= 0:
+            break
+    if turn_idx < 0:
+        return None
+
+    target = str(lane_id).strip()
+    for feat in lane_layer.getFeatures():
+        if str(feat[id_field]).strip() != target:
+            continue
+        val = feat[turn_idx]
+        try:
+            return int(val)
+        except (TypeError, ValueError):
+            return val
+    return None
+
+
 def _extract_lane_id(compact: str) -> Optional[str]:
     """从 lane id / lane【123】 等格式提取 lane ID。"""
     for pat in (
@@ -83,8 +127,16 @@ def _pick_problem_cells(cells: List[str]) -> List[str]:
     return cands
 
 
-def parse_error_texts(text: str) -> List[LaneFixAction]:
-    """从单条问题描述解析改错动作（可返回多条，如 left_rvs 互挂）。"""
+def parse_error_texts(text: str, lane_layer=None) -> List[LaneFixAction]:
+    """从单条问题描述解析改错动作（可返回多条，如 left_rvs 互挂）。
+
+    参数:
+        text: 单条错误描述。
+        lane_layer: 可选 LANE 图层（QgsVectorLayer）。传入后，格式1【问题#1】
+                    会先查该 lane 的 TURN_TYPE：==4 时前置一条【问题#6】
+                    fill_from_neighbor_rbdy 动作；否则维持原 sync_from_road。
+                    不传则跳过 TURN_TYPE 检查（默认仅 sync_from_road）。
+    """
     raw = _norm_cell(text)
     if not raw or "未发现问题" in raw:
         return []
@@ -177,12 +229,33 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
         bdyid_side = bdy_consistency.group(3)
         field = "BDY_LEFT" if side == "左" else "BDY_RIGHT"
         # 需要找到这个lane的ROAD_ID
-        return [
-            LaneFixAction(
-                "sync_from_road", field, "ID", lane_id, [], raw,
-                note=f"从ROAD图层同步RBDY_{bdyid_side.upper()}到LANE的{field}",
-            )
-        ]
+        sync_action = LaneFixAction(
+            "sync_from_road", field, "ID", lane_id, [], raw,
+            note=f"从ROAD图层同步RBDY_{bdyid_side.upper()}到LANE的{field}",
+        )
+
+        # 【问题#6 联动】TURN_TYPE == 4 时，先按问题#6 原理从邻居 LANE 补 RBDY
+        # 例如 lane 8171408 TURN_TYPE=4 时，先 fill_from_neighbor_rbdy 把 RBDY_L
+        # 补齐，再走 sync_from_road 同步 BDY_LEFT 与 ROAD.RBDY_L 一致。
+        # 若 lane_layer 未提供（纯文本调用），则跳过联动检查。
+        if lane_layer is not None:
+            try:
+                turn_val = _lookup_lane_turn_type(lane_layer, lane_id)
+            except Exception:
+                turn_val = None
+            if turn_val == 4:
+                rbdy_field = "RBDY_R" if side == "右" else "RBDY_L"
+                fill_action = LaneFixAction(
+                    "fill_from_neighbor_rbdy", rbdy_field, "ID", lane_id, [], raw,
+                    note=(
+                        f"{rbdy_field}（由【问题#1】联动触发，TURN_TYPE=4）："
+                        f"先按【问题#6】原理从 FROM/TO_NODE 邻居 LANE 经 "
+                        f"BOUNDARY.TYPE 过滤后补充，再执行 sync_from_road"
+                    ),
+                )
+                return [fill_action, sync_action]
+
+        return [sync_action]
     
     # 【新增#3】lmark记录顺序不对（边线A与B顺序错误）
     # 格式：【问题#4】laneID=8170936 lmark_l记录顺序不对（边线8171466与8170752顺序错误）
@@ -190,6 +263,36 @@ def parse_error_texts(text: str) -> List[LaneFixAction]:
     # 注：这个已经在123行有处理，但需要确认是否支持多ID的情况
     # 已有代码支持，无需修改
     
+    # 【新增#4】LANE 边线数量不足（应>2，实际:N）
+    # 格式：【问题#6】laneID=4046501 右边线数量不足(应>2，实际:1)
+    # 修复：先清空目标字段 RBDY_L/R，再从 FROM/TO_NODE 两侧的邻居 LANE 推断补充
+    #   1) 用 FROM_NODE/TO_NODE 找 LANE_NODE，读取其 LANES 字段关联的多个 LANE ID
+    #   2) 在 LANE 图层中找这些 ID（排除当前车道自身与 TURN_TYPE=4）
+    #   3) 取每个候选 lane 的 BDY_LEFT 值，去 BOUNDARY 图层找对应要素
+    #   4) 保留 BOUNDARY.TYPE ∈ {1, 2, 5, 6} 的，过滤掉 ∈ {3, 4, 7, 8, 9, 11}
+    #   5) 若仅剩 1 个候选 lane，取其 RBDY_L/R 写入当前车道
+    # 两侧可独立补充，因此最终 RBDY 字段 = FROM 侧候选的 RBDY + TO 侧候选的 RBDY
+    short_count = re.search(
+        r"(?:laneID|laneid)\s*=\s*(\d{6,}).*?"
+        r"([左右])边线数量不足.*?实际[：:\s]*(\d+)",
+        compact,
+        re.IGNORECASE,
+    )
+    if short_count:
+        lane_id = short_count.group(1)
+        side = short_count.group(2)
+        actual = short_count.group(3)
+        field = "RBDY_R" if side == "右" else "RBDY_L"
+        return [
+            LaneFixAction(
+                "fill_from_neighbor_rbdy", field, "ID", lane_id, [], raw,
+                note=(
+                    f"{field} 数量不足(实际={actual})："
+                    f"从 FROM/TO_NODE 邻居 LANE 经 BOUNDARY.TYPE 过滤后补充"
+                ),
+            )
+        ]
+
     # ==================== 原有规则 ====================
 
     # 1.3 lane 级别 lmark 缺失边线（左侧/右侧）
@@ -592,9 +695,9 @@ def _parse_legacy_patterns(compact: str, raw: str) -> List[LaneFixAction]:
     return []
 
 
-def parse_error_text(text: str) -> Optional[LaneFixAction]:
+def parse_error_text(text: str, lane_layer=None) -> Optional[LaneFixAction]:
     """兼容：返回第一条改错动作。"""
-    items = parse_error_texts(text)
+    items = parse_error_texts(text, lane_layer=lane_layer)
     return items[0] if items else None
 
 
@@ -685,7 +788,7 @@ def load_table_rows(path: str) -> List[List[str]]:
     raise RuntimeError("请选择 .xlsx / .csv 格式的错误表格")
 
 
-_ACTION_ORDER = {"remove": 0, "move": 1, "swap": 2, "add": 3, "skip": 9}
+_ACTION_ORDER = {"remove": 0, "move": 1, "swap": 2, "add": 3, "fill_from_neighbor_rbdy": 4, "fill_from_lrvs": 4, "skip": 9}
 
 
 def sort_fix_actions(actions: List[LaneFixAction]) -> List[LaneFixAction]:
@@ -693,8 +796,11 @@ def sort_fix_actions(actions: List[LaneFixAction]) -> List[LaneFixAction]:
     return sorted(actions, key=lambda item: (_ACTION_ORDER.get(item.action, 5), item.match_value))
 
 
-def parse_fix_actions(path: str) -> List[LaneFixAction]:
-    """读取表格并解析全部可识别改错项。"""
+def parse_fix_actions(path: str, lane_layer=None) -> List[LaneFixAction]:
+    """读取表格并解析全部可识别改错项。
+
+    lane_layer: 可选 LANE 图层；传入后会驱动【问题#1】↔【问题#6】联动。
+    """
     rows = load_table_rows(path)
     actions: List[LaneFixAction] = []
     seen = set()
@@ -705,7 +811,7 @@ def parse_fix_actions(path: str) -> List[LaneFixAction]:
             continue
 
         for desc in _pick_problem_cells(cells):
-            for action in parse_error_texts(desc):
+            for action in parse_error_texts(desc, lane_layer=lane_layer):
                 key = (
                     action.action,
                     action.target_field,

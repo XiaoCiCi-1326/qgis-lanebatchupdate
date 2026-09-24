@@ -47,6 +47,7 @@ ACTION_LABELS = {
     "set": "设置",
     "skip": "跳过",
     "fill_from_lrvs": "五级补全",
+    "fill_from_neighbor_rbdy": "邻居补RBDY",
     "sync_from_road": "从ROAD同步",
     "remove_mark_global": "全局删除边线",
 }
@@ -57,6 +58,7 @@ ACTION_COLORS = {
     "swap": QColor("#a06800"),
     "move": QColor("#5a3a8c"),
     "fill_from_lrvs": QColor("#1e5a8a"),
+    "fill_from_neighbor_rbdy": QColor("#0f6e6e"),
     "sync_from_road": QColor("#0066cc"),
     "skip": QColor("#666666"),
 }

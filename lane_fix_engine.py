@@ -13,12 +13,15 @@ from .lane_fix_excel import LaneFixAction
 
 # 逻辑字段 → LANE 常见字段名（含 lmark 别名）
 _FIELD_ALIASES = {
-    "BDY_LEFT": ("BDY_LEFT", "LMARK_L", "lmark_l"),
-    "BDY_RIGHT": ("BDY_RIGHT", "LMARK_R", "lmark_r"),
+    "BDY_LEFT": ("BDY_LEFT", "LMARK_L", "lmark_l", "LMARK_LEFT"),
+    "BDY_RIGHT": ("BDY_RIGHT", "LMARK_R", "lmark_r", "LMARK_RIGHT"),
     "RBDY_L": ("RBDY_L", "BDYID_L", "bdyid_l"),
     "RBDY_R": ("RBDY_R", "BDYID_R", "bdyid_r"),
     "ID": ("ID",),
     "ROAD_ID": ("ROAD_ID", "LINKID", "LINK_ID"),
+    "FROM_NODE": ("FROM_NODE", "FROMNODE", "FROM"),
+    "TO_NODE": ("TO_NODE", "TONODE", "TO"),
+    "TURN_TYPE": ("TURN_TYPE", "TURNTYPE"),
     "LEFT_RVS": ("LEFT_RVS", "left_rvs"),
     "RIGHT_RVS": ("RIGHT_RVS", "right_rvs"),
     "LEFT_FWD": ("LEFT_FWD", "left_fwd"),
@@ -35,16 +38,43 @@ _SIGNAL_FIELD_ALIASES = {
 class LaneFixEngine:
     """对齐 ProcessShpFiles：按 Excel 错误表批量改 LANE 边线字段。"""
 
-    def __init__(self, lane_layer: QgsVectorLayer, log_fn: Callable, dry_run: bool = False, road_layer: Optional[QgsVectorLayer] = None):
+    # 邻居车道补充 RBDY 时允许保留的 BOUNDARY.TYPE
+    _KEEP_BOUNDARY_TYPES = {"1", "2", "5", "6"}
+    # 邻居车道补充 RBDY 时排除的 BOUNDARY.TYPE
+    _DROP_BOUNDARY_TYPES = {"3", "4", "7", "8", "9", "11"}
+
+    def __init__(
+        self,
+        lane_layer: QgsVectorLayer,
+        log_fn: Callable,
+        dry_run: bool = False,
+        road_layer: Optional[QgsVectorLayer] = None,
+        lane_node_layer: Optional[QgsVectorLayer] = None,
+        boundary_layer: Optional[QgsVectorLayer] = None,
+    ):
         self.lane_layer = lane_layer
         self.road_layer = road_layer
+        self.lane_node_layer = lane_node_layer
+        self.boundary_layer = boundary_layer
         self.log = log_fn
         self.dry_run = dry_run
         self.field_map = self._build_field_map(lane_layer)
         self.road_field_map = self._build_road_field_map(road_layer) if road_layer else {}
+        self.lane_node_field_map = (
+            self._build_simple_field_map(lane_node_layer, {"ID": "ID", "LANES": "LANES"})
+            if lane_node_layer
+            else {}
+        )
+        self.boundary_field_map = (
+            self._build_simple_field_map(boundary_layer, {"ID": "ID", "TYPE": "TYPE"})
+            if boundary_layer
+            else {}
+        )
         self.lane_by_id: Dict[str, int] = {}
         self.lane_by_road: Dict[str, List[int]] = {}
         self.road_by_id: Dict[str, int] = {}
+        self.lane_node_by_id: Dict[str, int] = {}
+        self.boundary_by_id: Dict[str, int] = {}
         self._index_features()
 
     @staticmethod
@@ -108,6 +138,31 @@ class LaneFixEngine:
                     break
         return resolved
 
+    @staticmethod
+    def _build_simple_field_map(
+        layer: Optional[QgsVectorLayer],
+        aliases: Dict[str, Tuple[str, ...]],
+    ) -> Dict[str, str]:
+        """按指定别名表构建简单的「逻辑名 → 实际字段名」映射。
+        用法：LANE_NODE 需要 ID / LANES，BOUNDARY 需要 ID / TYPE。
+        aliases 既支持元组 ("ID", ("id", "ID2")) 也支持裸字符串 ("LANES", "lanes")。"""
+        if not layer:
+            return {}
+        upper = {field.name().upper(): field.name() for field in layer.fields()}
+        resolved = {}
+        for logical, alias_list in aliases.items():
+            # 兼容「裸字符串别名」：自动包成单元素元组
+            if isinstance(alias_list, str):
+                alias_iter = (alias_list,)
+            else:
+                alias_iter = alias_list
+            for alias in alias_iter:
+                actual = upper.get(alias.upper())
+                if actual:
+                    resolved[logical] = actual
+                    break
+        return resolved
+
     def _index_features(self):
         id_field = self.field_map.get("ID")
         road_field = self.field_map.get("ROAD_ID")
@@ -120,7 +175,7 @@ class LaneFixEngine:
                 road_id = self.norm_id(feat[road_field])
                 if road_id:
                     self.lane_by_road.setdefault(road_id, []).append(feat.id())
-        
+
         # 索引ROAD图层
         if self.road_layer:
             road_id_field = self.road_field_map.get("ID")
@@ -129,6 +184,24 @@ class LaneFixEngine:
                     road_id = self.norm_id(feat[road_id_field])
                     if road_id:
                         self.road_by_id[road_id] = feat.id()
+
+        # 索引 LANE_NODE：按 ID 找节点 → 读 LANES 关联
+        if self.lane_node_layer:
+            node_id_field = self.lane_node_field_map.get("ID")
+            if node_id_field:
+                for feat in self.lane_node_layer.getFeatures():
+                    nid = self.norm_id(feat[node_id_field])
+                    if nid:
+                        self.lane_node_by_id[nid] = feat.id()
+
+        # 索引 BOUNDARY：按 ID 找 → 读 TYPE 过滤
+        if self.boundary_layer:
+            bdy_id_field = self.boundary_field_map.get("ID")
+            if bdy_id_field:
+                for feat in self.boundary_layer.getFeatures():
+                    bid = self.norm_id(feat[bdy_id_field])
+                    if bid:
+                        self.boundary_by_id[bid] = feat.id()
 
     def _resolve_actual_field(self, logical: str) -> Optional[str]:
         # 先按逻辑名查
@@ -389,6 +462,314 @@ class LaneFixEngine:
             return 0
         return updated
 
+    # ==================== 【问题#6】边线数量不足 专用 ====================
+
+    def _lookup_neighbor_lane_rbdy(
+        self,
+        lane_id: str,
+        side_node_field: str,
+        logical_rbdy: str,
+    ) -> List[str]:
+        """
+        在 lane_id 的 FROM/TO_NODE 节点处，按以下链路找候选车道，
+        收集其 RBDY_L/R 的所有值作为补充来源：
+
+          lane_id.FROM_NODE (or TO_NODE)
+            → LANE_NODE[ID=node].LANES  → 多个 lane ID
+              → 排除 lane_id 自身 + TURN_TYPE=4
+              → 取候选 lane 的 BDY_LEFT
+                → BOUNDARY[ID=BDY_LEFT].TYPE
+                  → 保留 TYPE ∈ {1, 2, 5, 6}；过滤 ∈ {3, 4, 7, 8, 9, 11}
+                  → 保留下的 lane 是「合格邻居」
+
+        返回所有合格邻居 RBDY 的并集（按出现顺序，去重）。
+        """
+        if not (self.lane_node_layer and self.boundary_layer):
+            self.log(
+                f"  [lane {lane_id}] {side_node_field} 侧跳过：LANE_NODE 或 BOUNDARY 图层未加载",
+                show_bar=False,
+            )
+            return []
+        node_id_field = self.lane_node_field_map.get("ID")
+        node_lanes_field = self.lane_node_field_map.get("LANES")
+        bdy_id_field = self.boundary_field_map.get("ID")
+        bdy_type_field = self.boundary_field_map.get("TYPE")
+        lane_bdy_left_field = self.field_map.get("BDY_LEFT")
+        lane_turn_field = self.field_map.get("TURN_TYPE")
+        missing = []
+        if not node_id_field: missing.append("LANE_NODE.ID")
+        if not node_lanes_field: missing.append("LANE_NODE.LANES")
+        if not bdy_id_field: missing.append("BOUNDARY.ID")
+        if not bdy_type_field: missing.append("BOUNDARY.TYPE")
+        if not lane_bdy_left_field: missing.append("LANE.BDY_LEFT")
+        if missing:
+            self.log(
+                f"  [lane {lane_id}] {side_node_field} 侧跳过：缺字段 {missing}",
+                level="WARN", show_bar=False,
+            )
+            return []
+
+        # 当前 lane 的 FROM/TO_NODE 节点 ID
+        node_id_field_lane = self.field_map.get(side_node_field)
+        if not node_id_field_lane:
+            self.log(
+                f"  [lane {lane_id}] {side_node_field} 侧跳过：LANE 无 {side_node_field} 字段",
+                level="WARN", show_bar=False,
+            )
+            return []
+        fid_self = self.lane_by_id.get(lane_id)
+        if fid_self is None:
+            self.log(
+                f"  [lane {lane_id}] 未在 LANE 图层找到",
+                level="WARN", show_bar=False,
+            )
+            return []
+        feat_self = self.lane_layer.getFeature(fid_self)
+        node_id = self.norm_id(feat_self[node_id_field_lane])
+        if not node_id:
+            self.log(
+                f"  [lane {lane_id}] {side_node_field} 为空",
+                show_bar=False,
+            )
+            return []
+
+        # 找 LANE_NODE 节点
+        node_fid = self.lane_node_by_id.get(node_id)
+        if node_fid is None:
+            self.log(
+                f"  [lane {lane_id}] {side_node_field}={node_id} 未在 LANE_NODE 中找到",
+                show_bar=False,
+            )
+            return []
+        node_feat = self.lane_node_layer.getFeature(node_fid)
+        related_lane_ids = self.split_ids(node_feat[node_lanes_field])
+        if not related_lane_ids:
+            self.log(
+                f"  [lane {lane_id}] LANE_NODE[{node_id}].LANES 为空",
+                show_bar=False,
+            )
+            return []
+
+        # 找这些 lane，排除自身 + TURN_TYPE=4
+        candidates: List[Tuple[str, int]] = []  # (lane_id_str, feature_id)
+        for rid in related_lane_ids:
+            if rid == lane_id:
+                continue
+            cand_fid = self.lane_by_id.get(rid)
+            if cand_fid is None:
+                continue
+            cand_feat = self.lane_layer.getFeature(cand_fid)
+            if lane_turn_field:
+                try:
+                    turn_val = cand_feat[lane_turn_field]
+                    if str(turn_val).strip() == "4":
+                        continue
+                except KeyError:
+                    pass
+            candidates.append((rid, cand_fid))
+
+        if not candidates:
+            self.log(
+                f"  [lane {lane_id}] {side_node_field} 侧候选 lane 全部被排除（自身或 TURN_TYPE=4）",
+                show_bar=False,
+            )
+            return []
+
+        # 对每个候选 lane：用其 BDY_LEFT 找 BOUNDARY，过滤 TYPE
+        kept: List[Tuple[str, int]] = []
+        for rid, cand_fid in candidates:
+            cand_feat = self.lane_layer.getFeature(cand_fid)
+            bdy_left_ids = self.split_ids(cand_feat[lane_bdy_left_field])
+            if not bdy_left_ids:
+                self.log(
+                    f"    候选 lane {rid} BDY_LEFT 为空，跳过",
+                    show_bar=False,
+                )
+                continue
+            # AND 语义：候选 lane 的所有 BDY_LEFT ID 都必须映射到
+            # 合格 BOUNDARY（TYPE ∈ KEEP 或不在 DROP），任一不通过就丢弃整个候选。
+            all_ok = True
+            per_id_results: List[Tuple[str, str]] = []
+            for bdy_id in bdy_left_ids:
+                bdy_fid = self.boundary_by_id.get(bdy_id)
+                if bdy_fid is None:
+                    per_id_results.append((bdy_id, "未在 BOUNDARY 中找到"))
+                    all_ok = False
+                    continue
+                bdy_feat = self.boundary_layer.getFeature(bdy_fid)
+                type_val = str(bdy_feat[bdy_type_field]).strip()
+                if type_val in self._DROP_BOUNDARY_TYPES:
+                    per_id_results.append((bdy_id, f"TYPE={type_val!r} ∈ DROP"))
+                    all_ok = False
+                    continue
+                if type_val in self._KEEP_BOUNDARY_TYPES:
+                    per_id_results.append((bdy_id, f"TYPE={type_val!r} ∈ KEEP"))
+                    continue
+                # 其他 TYPE 也保留（保守）：例如空字符串、未知值
+                # 仅在显式属于 DROP 集合时才排除
+                per_id_results.append((bdy_id, f"TYPE={type_val!r} 保守通过"))
+            if all_ok:
+                kept.append((rid, cand_fid))
+                if len(bdy_left_ids) > 1:
+                    self.log(
+                        f"    候选 lane {rid} 多 BDY_LEFT 全部合格：{per_id_results}",
+                        show_bar=False,
+                    )
+            else:
+                self.log(
+                    f"    候选 lane {rid} 因部分 BDY_LEFT 不合格被排除（AND 语义）：{per_id_results}",
+                    show_bar=False,
+                )
+
+        if not kept:
+            self.log(
+                f"  [lane {lane_id}] {side_node_field} 侧无合格邻居（BOUNDARY.TYPE 过滤后为空）",
+                show_bar=False,
+            )
+            return []
+
+        # 取每个合格邻居的 RBDY 字段，聚合去重
+        rbdy_field = self.field_map.get(logical_rbdy)
+        if not rbdy_field:
+            return []
+        result: List[str] = []
+        seen: set = set()
+        for rid, cand_fid in kept:
+            cand_feat = self.lane_layer.getFeature(cand_fid)
+            for v in self.split_ids(cand_feat[rbdy_field]):
+                if v and v not in seen:
+                    seen.add(v)
+                    result.append(v)
+        self.log(
+            f"  [lane {lane_id}] {side_node_field} 侧：候选 {len(candidates)} → 合格 {len(kept)}，"
+            f"聚合 RBDY={result}",
+            show_bar=False,
+        )
+        return result
+
+    def _fill_rbdy_from_neighbor_lanes(
+        self,
+        lane_id: str,
+        logical_rbdy: str,
+    ) -> Tuple[bool, int]:
+        """
+        【问题#6】RBDY 数量不足的修复入口：
+
+        1. 清空目标 lane 的 RBDY 字段
+        2. 分别从 FROM_NODE 侧和 TO_NODE 侧的 LANE_NODE.LANES 出发，
+           经过 TURN_TYPE=4 与 BOUNDARY.TYPE 过滤后，聚合邻居的 RBDY 值
+        3. 把两侧聚合结果拼到目标 lane 的 RBDY 上（按 FROM → TO 顺序拼接）
+
+        返回 (success, applied_count)
+        """
+        if logical_rbdy not in ("RBDY_L", "RBDY_R"):
+            self.log(
+                f"[fill_from_neighbor_rbdy] 不支持的目标字段: {logical_rbdy}",
+                level="ERROR", show_bar=False,
+            )
+            return False, 0
+
+        if self.lane_node_layer is None or self.boundary_layer is None:
+            self.log(
+                "[fill_from_neighbor_rbdy] 缺少 LANE_NODE 或 BOUNDARY 图层，跳过",
+                level="WARN", show_bar=False,
+            )
+            return False, 0
+
+        fid = self.lane_by_id.get(lane_id)
+        if fid is None:
+            self.log(
+                f"[fill_from_neighbor_rbdy] 未找到车道 ID={lane_id}",
+                level="WARN", show_bar=False,
+            )
+            return False, 0
+
+        # 进入编辑模式（外部已开则保持）
+        was_editing = self.lane_layer.isEditable()
+        if not was_editing and not self.lane_layer.startEditing():
+            self.log(
+                f"[fill_from_neighbor_rbdy] LANE 图层无法进入编辑模式",
+                level="ERROR", show_bar=False,
+            )
+            return False, 0
+
+        try:
+            # 1) 收集 FROM/TO 两侧邻居的 RBDY 值
+            from_values = self._lookup_neighbor_lane_rbdy(
+                lane_id, "FROM_NODE", logical_rbdy
+            )
+            to_values = self._lookup_neighbor_lane_rbdy(
+                lane_id, "TO_NODE", logical_rbdy
+            )
+            merged: List[str] = []
+            seen: set = set()
+            for v in from_values + to_values:
+                if v and v not in seen:
+                    seen.add(v)
+                    merged.append(v)
+
+            rbdy_field = self.field_map.get(logical_rbdy)
+            feat = self.lane_layer.getFeature(fid)
+            old_val = feat[rbdy_field]
+            new_val = "|".join(merged) if merged else None
+
+            self.log(
+                f"[fill_from_neighbor_rbdy] lane {lane_id} {logical_rbdy}: "
+                f"清空 {old_val!r} → 写入 {new_val!r} (FROM={len(from_values)}, TO={len(to_values)})",
+                show_bar=False,
+            )
+
+            if not merged:
+                # 两侧都没找到合格邻居：不动原值（避免把「数量不足」改
+                # 成「为空」，否则数据更糟）。只记录日志供定位。
+                self.log(
+                    f"[fill_from_neighbor_rbdy] lane {lane_id} {logical_rbdy}: "
+                    f"两侧均无合格邻居，保留原值 {old_val!r} 不动",
+                    show_bar=False,
+                )
+                return False, 0
+
+            # 2) 写入：清空原值再设新值（用 changeAttributeValue 避免 updateFeature 在 shapefile 上写盘失败）
+            if old_val == new_val:
+                self.log(
+                    f"  值未变化，跳过写入",
+                    show_bar=False,
+                )
+                return True, 0
+            self.lane_layer.changeAttributeValue(
+                fid, feat.fieldNameIndex(rbdy_field), new_val
+            )
+            # 同步写入 BDY_RIGHT：填入 RBDY_R 后，将其值覆盖到 BDY_RIGHT（shapefile 也用 changeAttributeValue）
+            bdy_right_field = self._resolve_actual_field("BDY_RIGHT")
+            if logical_rbdy == "RBDY_R" and bdy_right_field:
+                old_bdy = feat[bdy_right_field]
+                self.lane_layer.changeAttributeValue(
+                    fid, feat.fieldNameIndex(bdy_right_field), new_val
+                )
+                self.log(
+                    f"[fill_from_neighbor_rbdy] lane {lane_id} BDY_RIGHT: "
+                    f"同步 {old_bdy!r} → 写入 {new_val!r} ✓",
+                    show_bar=False,
+                )
+            self.log(
+                f"[fill_from_neighbor_rbdy] lane {lane_id} {logical_rbdy}: "
+                f"清空 {old_val!r} → 写入 {new_val!r} ✓",
+                show_bar=False,
+            )
+            # ==================== 【问题#6】边线数量不足 专用 ====================
+            # 同步：把同 ROAD_ID 组内锚点车道的 4 个 BDY/RBDY 字段覆盖到其他车道
+            # 例如 lane 4046501 与 4046502 同 ROAD_ID=4046501，修复 4046501 后
+            # 把它的 BDY_LEFT/BDY_RIGHT/RBDY_L/RBDY_R 也写到 4046502 上。
+            self._sync_bdy_rbdy_to_link_group(lane_id)
+            # ==================== 【问题#6】边线数量不足 专用 结束 ====================
+            return True, 1
+        except Exception as exc:
+            self.log(
+                f"[fill_from_neighbor_rbdy] 异常: {exc}",
+                level="ERROR", show_bar=False,
+            )
+            return False, 0
+
     def scan_and_fill_all_empty_rbdy(self) -> Dict[str, int]:
         """
         全量扫描所有 lane，对 RBDY_L/R 为空的字段按五级策略补全。
@@ -501,6 +882,8 @@ class LaneFixEngine:
             if self.is_empty(rbdy_val):
                 continue
             feat[rbdy_f] = rbdy_val
+            # 同步：当 RBDY_R 写入时，把 BDY_RIGHT 覆盖成同样的值
+            self._sync_bdy_from_rbdy(feat, logical_rbdy, rbdy_val)
             method = f"rev{idx}" if idx <= 2 else f"fwd{idx-2}"
             return True, method
 
@@ -510,6 +893,7 @@ class LaneFixEngine:
             bdy_val = feat[own_bdy_f]
             if not self.is_empty(bdy_val):
                 feat[rbdy_f] = bdy_val
+                # 兜底本身就是 BDY 写 RBDY，BDY 已对齐，无需再同步
                 return True, "fallback"
 
         # 策略 6：同 link 上其他车道 RBDY 复用
@@ -527,9 +911,138 @@ class LaneFixEngine:
                 other_val = other_feat[rbdy_f]
                 if not self.is_empty(other_val):
                     feat[rbdy_f] = other_val
+                    # 同步：当 RBDY_R 写入时，把 BDY_RIGHT 覆盖成同样的值
+                    self._sync_bdy_from_rbdy(feat, logical_rbdy, other_val)
                     return True, "link_share"
 
         return False, ""
+
+    def _sync_bdy_from_rbdy(self, feat, logical_rbdy: str, new_val):
+        """
+        当 RBDY_R 被填入时，把 BDY_RIGHT 覆盖为同样的值（与原 _LMARK_SYNC 区别：这里是覆盖，不是并入）。
+        仅作用于 RBDY_R（与 BDY_RIGHT 配对）。
+        """
+        if logical_rbdy != "RBDY_R":
+            return
+        bdy_right_field = self._resolve_actual_field("BDY_RIGHT")
+        if not bdy_right_field:
+            return
+        old_bdy = feat[bdy_right_field]
+        if old_bdy == new_val:
+            return
+        # 直接写 feat[...]；调用方最后会 updateFeature 上盘（scan_and_fill_all_empty_rbdy 走 updateFeature 路径）
+        feat[bdy_right_field] = new_val
+
+    def _sync_bdy_rbdy_to_link_group(self, primary_lane_id: str) -> int:
+        """
+        【同 ROAD_ID 同步】把同 ROAD_ID 组内「锚点车道」的
+        BDY_LEFT / BDY_RIGHT / RBDY_L / RBDY_R 四个字段覆盖到组内所有其他车道上。
+
+        锚点选取规则：
+        1. 优先 lane ID == ROAD_ID 的「主车道」（数据模型里 ROAD 本身的车道）
+        2. 兜底取 lane ID 数值最小的车道
+
+        用途：例如 lane 4046501 与 lane 4046502 都 ROAD_ID=4046501 时，
+        两条车道的 BDY_LEFT/BDY_RIGHT/RBDY_L/RBDY_R 应保持一致；
+        修复某一条车道后，自动把它的 4 字段覆盖到同 ROAD 的其他车道。
+
+        调用方：`_fill_rbdy_from_neighbor_lanes` / `_try_fill_rbdy` 在写入成功后调用。
+        返回实际写入的车道数（不含锚点自身）。
+        """
+        road_field = self.field_map.get("ROAD_ID")
+        id_field = self.field_map.get("ID")
+        if not (road_field and id_field):
+            return 0
+
+        primary_fid = self.lane_by_id.get(primary_lane_id)
+        if primary_fid is None:
+            return 0
+        primary_feat = self.lane_layer.getFeature(primary_fid)
+        if not primary_feat.isValid():
+            return 0
+        road_id = self.norm_id(primary_feat[road_field])
+        if not road_id:
+            return 0
+
+        group_fids = self.lane_by_road.get(road_id, [])
+        if len(group_fids) < 2:
+            return 0
+
+        # 收集组内所有 (fid, norm_lane_id) 对
+        group_members: List[Tuple[int, str]] = []
+        for fid in group_fids:
+            feat = self.lane_layer.getFeature(fid)
+            if not feat.isValid():
+                continue
+            norm_id = self.norm_id(feat[id_field])
+            if norm_id:
+                group_members.append((fid, norm_id))
+        if len(group_members) < 2:
+            return 0
+
+        # 锚点：优先 lane ID == ROAD_ID，否则按 lane ID 数值升序
+        anchor_fid: Optional[int] = None
+        anchor_id: Optional[str] = None
+        for fid, lid in group_members:
+            if lid == road_id:
+                anchor_fid = fid
+                anchor_id = lid
+                break
+        if anchor_fid is None:
+            def _key(lid: str):
+                try:
+                    return (0, int(lid))
+                except (TypeError, ValueError):
+                    return (1, lid)
+            group_members.sort(key=lambda x: _key(x[1]))
+            anchor_fid, anchor_id = group_members[0]
+
+        anchor_feat = self.lane_layer.getFeature(anchor_fid)
+        if not anchor_feat.isValid():
+            return 0
+
+        # 解析要同步的 4 个字段（按逻辑名 → 实际字段名）
+        sync_pairs: List[Tuple[str, object]] = []  # [(actual_field, anchor_val), ...]
+        for logical in ("BDY_LEFT", "BDY_RIGHT", "RBDY_L", "RBDY_R"):
+            actual = self._resolve_actual_field(logical)
+            if actual:
+                sync_pairs.append((actual, anchor_feat[actual]))
+        if not sync_pairs:
+            return 0
+
+        # 同步到所有非锚点车道（用 changeAttributeValue 写盘）
+        other_members = [(fid, lid) for fid, lid in group_members if fid != anchor_fid]
+        synced_count = 0
+        synced_ids: List[str] = []
+        for other_fid, other_id in other_members:
+            other_feat = self.lane_layer.getFeature(other_fid)
+            if not other_feat.isValid():
+                continue
+            any_changed = False
+            for actual_field, anchor_val in sync_pairs:
+                new_val = anchor_val if not self.is_empty(anchor_val) else None
+                cur = other_feat[actual_field]
+                cur_norm = None if self.is_empty(cur) else cur
+                if cur_norm == new_val:
+                    continue
+                self.lane_layer.changeAttributeValue(
+                    other_fid,
+                    self.lane_layer.fields().indexFromName(actual_field),
+                    new_val,
+                )
+                any_changed = True
+            if any_changed:
+                synced_count += 1
+                synced_ids.append(other_id)
+
+        if synced_count:
+            self.log(
+                f"[sync_link_group] ROAD_ID={road_id} 锚点 lane={anchor_id}: "
+                f"已把 BDY_LEFT/BDY_RIGHT/RBDY_L/RBDY_R 4 字段覆盖到 {synced_count} 条同 ROAD 车道 "
+                f"({', '.join(synced_ids)})",
+                show_bar=False,
+            )
+        return synced_count
 
     def apply_actions(self, actions: List[LaneFixAction]) -> Dict[str, int]:
         """执行改错，返回统计。"""
@@ -626,7 +1139,7 @@ class LaneFixEngine:
                     self.log(f"跳过(无字段): {action.target_field}", show_bar=False)
                     continue
 
-                if not action.mark_ids and action.action not in ("skip", "copy", "fill_from_lrvs", "sync_from_road", "set"):
+                if not action.mark_ids and action.action not in ("skip", "copy", "fill_from_lrvs", "fill_from_neighbor_rbdy", "sync_from_road", "set"):
                     stats["skipped"] += 1
                     self.log(f"跳过(无边线ID): {action.source_text[:80]}", show_bar=False)
                     continue
@@ -642,6 +1155,24 @@ class LaneFixEngine:
                         stats["skipped"] += 1
                         self.log(
                             f"跳过(无法从对向车道补): ROAD_ID={action.match_value} "
+                            f"{action.target_field} {action.source_text[:60]}",
+                            show_bar=False,
+                        )
+                    continue
+
+                if action.action == "fill_from_neighbor_rbdy":
+                    # 【问题#6】边线数量不足：清空 RBDY，再从 FROM/TO_NODE
+                    # 邻居 LANE（经 BOUNDARY.TYPE 过滤）补充
+                    ok, applied_count = self._fill_rbdy_from_neighbor_lanes(
+                        action.match_value, action.target_field
+                    )
+                    if ok:
+                        stats["applied"] += max(1, applied_count)
+                        stats["features_updated"] += max(1, applied_count)
+                    else:
+                        stats["skipped"] += 1
+                        self.log(
+                            f"跳过(无法从邻居车道补): lane={action.match_value} "
                             f"{action.target_field} {action.source_text[:60]}",
                             show_bar=False,
                         )

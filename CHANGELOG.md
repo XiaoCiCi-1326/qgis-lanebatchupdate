@@ -1,5 +1,33 @@
 # 更新日志
 
+## v1.0.4.99
+- 修正「候选 lane 多 BDY_LEFT ID」的过滤语义：之前是 **OR**（任意一个 BDY 对应 BOUNDARY.TYPE ∈ KEEP 即合格），改为 **AND**（候选 lane 的所有 BDY_LEFT ID 都必须对应 KEEP 或非 DROP 集合的 BOUNDARY，任一不通过即丢弃整个候选）。
+- 对每个被排除的候选日志里同时打印「逐 ID 评估结果」，便于排查。
+- 【4046501 等】当 RBDY_R 被填入或更新时，**同步把 BDY_RIGHT 覆盖为相同的值**（覆盖式，与原 `_LMARK_SYNC` 的并入语义不同）。涉及两条路径：
+  - `_fill_rbdy_from_neighbor_lanes`：`fill_from_neighbor_rbdy` Action 触发，写完 RBDY_R 后用 `changeAttributeValue` 写 BDY_RIGHT（shapefile 安全）。
+  - `_try_fill_rbdy`（策略 1~4 与策略 6 复用）：写完 RBDY_R 后通过新增的 `_sync_bdy_from_rbdy` 把 BDY_RIGHT 覆盖一致；策略 5 走本车道 BDY 兜底，本身已对齐故跳过。
+- 仅作用于 `logical_rbdy == "RBDY_R"`，不污染 RBDY_L 路径与 BDY_LEFT 字段。
+- 【同 ROAD_ID 4 字段同步】**仅作用于【问题#6】边线数量不足的 `fill_from_neighbor_rbdy` 路径**：修复该车道后，自动把同 `ROAD_ID` 组内「锚点车道」（优先 `lane ID == ROAD_ID` 的主车道，否则取 lane ID 数值最小）的 `BDY_LEFT / BDY_RIGHT / RBDY_L / RBDY_R` 四个字段**覆盖式**写到组内所有其他车道上。
+  - 新增 `_sync_bdy_rbdy_to_link_group(primary_lane_id)`，锚点选取 + 4 字段批量 `changeAttributeValue`。
+  - **仅在 `_fill_rbdy_from_neighbor_lanes`（`fill_from_neighbor_rbdy` Action）写入成功后调用**；`_try_fill_rbdy`（五级策略 / 全量补 RBDY）暂不触发，避免影响常规补空逻辑。
+  - 示例：lane 4046501 与 lane 4046502 都 `ROAD_ID=4046501`，修复 4046501 后会把它的 4 字段覆盖到 4046502；同组只有 1 条车道时直接跳过。
+
+## v1.0.4.100
+- 修复【问题#6】只清空未写入的 bug：`_FIELD_ALIASES` 之前未包含 `FROM_NODE` / `TO_NODE` / `TURN_TYPE`，导致 `_lookup_neighbor_lane_rbdy` 在 `self.field_map.get("FROM_NODE")` 时拿到 `None` 直接静默返回空列表，结果只有 `merged` 为空时进入「清空原值」分支。
+- 修复 `_build_simple_field_map` 入参要求 `Tuple[str, ...]` 但调用处传了裸字符串（迭代字符串会被拆字符）导致 LANE_NODE / BOUNDARY 的 field_map 永远为 `{}` 的问题。现在两种写法都兼容。
+- `_FIELD_ALIASES` 补齐：`FROM_NODE` / `TO_NODE` / `TURN_TYPE` / `LMARK_LEFT` / `LMARK_RIGHT`，同时给 `BDY_LEFT` / `BDY_RIGHT` 也加 `LMARK_*` 别名。
+- 修复找不到合格邻居时反而把字段清空的副作用：现改为保留原值不动（避免「数量不足」变成「为空」导致数据更糟），并补充每个分支的 WARN 日志便于定位。
+- 增加单元测试 `_test_neighbor_fix.py`（mock QGIS）端到端验证 FROM/TO 两侧聚合 → 写入逻辑（已通过）。
+- 【问题#1 ↔ 问题#6 联动】格式1 `laneID=xxx [左/右]边线应与ROAD_LINK.BDYID_[LR]一致` 在执行前自动查询该 lane 的 `TURN_TYPE` 字段：==4 时**先按【问题#6】原理**（清空 `RBDY_L/R` + 从 `FROM/TO_NODE` 邻居 LANE 经 `BOUNDARY.TYPE` 过滤后聚合）补齐对应侧的 `RBDY`，再执行 `sync_from_road` 把 `BDY_LEFT/RIGHT` 与 ROAD.RBDY 对齐；TURN_TYPE ≠ 4 或未提供 LANE 图层时维持原 `sync_from_road` 单条路径（优雅降级）。
+  - `parse_error_texts(text, lane_layer=None)` / `parse_error_text` / `parse_fix_actions` / `excel_preview_controller._parse_with_rows` / `error_results_controller.fix_quality_records` 全部接受可选 `lane_layer` 参数，自动驱动联动。
+  - 新增 `_lookup_lane_turn_type(lane_layer, lane_id)` 辅助函数，按字段别名 `TURN_TYPE / TURNTYPE / turn_type` 回退查找，找不到返回 `None`。
+  - `_ACTION_ORDER` 已保证 `fill_from_neighbor_rbdy (4)` 在 `sync_from_road (5)` 之前执行，排序无忧。
+
+## v1.0.4.99
+- 新增「【问题#6】LANE 边线数量不足」自动修复：解析 `laneID=xxx 右边线数量不足(应>N，实际:M)` 这类错误后，清空目标 lane 的 `RBDY_L/R`，从 `FROM_NODE` 与 `TO_NODE` 两个方向各自分别查找 `LANE_NODE.LANES` 关联的邻居 LANE，经「排除当前车道 + 排除 `TURN_TYPE=4` + 按 `BDY_LEFT` 找 BOUNDARY 后过滤 `TYPE ∈ {1,2,5,6}`」三级过滤得到合格邻居，聚合邻居 `RBDY_L/R` 的边线 ID 后按 FROM→TO 顺序回写到目标车道。
+- `LaneFixEngine` 新增 `lane_node_layer` / `boundary_layer` 可选参数与对应索引，`lane_fix_controller.py` 与 `excel_preview_controller.py` 自动识别工程内 LANE_NODE 与 BOUNDARY 图层并传入；缺失时日志告警并跳过该规则，其余规则不受影响。
+- 预览对话框增加 `fill_from_neighbor_rbdy` 动作颜色标识。
+
 ## v1.0.4.98
 - 修复「全部规则」错误记录点击无法定位的问题：原 `\b` 词边界在 Python 3 Unicode 模式下会把中文当 `\w`，导致 `路口lane挂接缺失:4034636` / `不应挂接lane:4030675` 里的 lane ID 无法匹配。
 - 词边界改用 ASCII 版 `(?<![A-Za-z0-9_])…(?![A-Za-z0-9_])`，并新增 `lane_id` / `linkid` / `link_id` / `挂接缺失:N` 等显式模式。

@@ -93,6 +93,19 @@ class LaneFixController:
 
         signal_layer = self._get_layer_by_name("SIGNAL")
 
+        # 【问题#6】邻居 LANE 补充 RBDY 需要 LANE_NODE 与 BOUNDARY 图层
+        lane_node_layer = self._get_layer_by_name("LANE_NODE")
+        boundary_layer = self._get_layer_by_name("BOUNDARY")
+
+        if lane_node_layer:
+            self._log("LANE_NODE 图层: " + lane_node_layer.name(), show_bar=False)
+        else:
+            self._log("LANE_NODE 图层未加载，「边线数量不足」将无法自动补充", level="WARN", show_bar=False)
+        if boundary_layer:
+            self._log("BOUNDARY 图层: " + boundary_layer.name(), show_bar=False)
+        else:
+            self._log("BOUNDARY 图层未加载，「边线数量不足」将无法自动补充", level="WARN", show_bar=False)
+
         if roadlink_layer:
 
             self._log("ROAD_LINK 图层: " + roadlink_layer.name(), show_bar=False)
@@ -276,7 +289,14 @@ class LaneFixController:
                     self._log("警告：未找到ROAD图层，sync_from_road功能将跳过")
                     self._log("提示：需要名称为'ROAD'的矢量图层")
 
-                engine = LaneFixEngine(lane_layer, self._log, dry_run=False, road_layer=road_layer)
+                engine = LaneFixEngine(
+                    lane_layer,
+                    self._log,
+                    dry_run=False,
+                    road_layer=road_layer,
+                    lane_node_layer=lane_node_layer,
+                    boundary_layer=boundary_layer,
+                )
 
                 stats = engine.apply_all(lane_actions)
 
