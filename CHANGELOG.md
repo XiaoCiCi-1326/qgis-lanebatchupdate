@@ -22,6 +22,7 @@
   - `parse_error_texts(text, lane_layer=None)` / `parse_error_text` / `parse_fix_actions` / `excel_preview_controller._parse_with_rows` / `error_results_controller.fix_quality_records` 全部接受可选 `lane_layer` 参数，自动驱动联动。
   - 新增 `_lookup_lane_turn_type(lane_layer, lane_id)` 辅助函数，按字段别名 `TURN_TYPE / TURNTYPE / turn_type` 回退查找，找不到返回 `None`。
   - `_ACTION_ORDER` 已保证 `fill_from_neighbor_rbdy (4)` 在 `sync_from_road (5)` 之前执行，排序无忧。
+- 【3.16 扳手错】导出 Excel 后主动结束子进程：之前偶发出现 `qgis-bin.exe` 窗口关闭但进程残留、Windows 标为"未响应"。现已在 `errorlog.xlsx` 一旦写入磁盘就由父进程 `_poll_external_runner` 调用 `_stop_process` 主动 `terminate`/`kill`；同时 `shpchecker_runner.py` 在 `QApplication.quit()` 后用 `QTimer.singleShot(3000, os._exit(0))` 兜底自退，双保险。
 
 ## v1.0.4.99
 - 新增「【问题#6】LANE 边线数量不足」自动修复：解析 `laneID=xxx 右边线数量不足(应>N，实际:M)` 这类错误后，清空目标 lane 的 `RBDY_L/R`，从 `FROM_NODE` 与 `TO_NODE` 两个方向各自分别查找 `LANE_NODE.LANES` 关联的邻居 LANE，经「排除当前车道 + 排除 `TURN_TYPE=4` + 按 `BDY_LEFT` 找 BOUNDARY 后过滤 `TYPE ∈ {1,2,5,6}`」三级过滤得到合格邻居，聚合邻居 `RBDY_L/R` 的边线 ID 后按 FROM→TO 顺序回写到目标车道。

@@ -271,23 +271,52 @@ class ShpCheckerController:
             lines.append("启动 QGIS 3.16 失败: %r" % (exc,))
             return False
 
+    def _has_fresh_errorlog(self):
+        """检查本次运行是否已经生成 errorlog.xlsx（用于决定是否强杀 3.16 子进程）。"""
+        if not self._input_dir or not os.path.isdir(self._input_dir):
+            return False
+        try:
+            for root, _dirs, names in os.walk(self._input_dir):
+                for name in names:
+                    if not (name.lower().startswith("errorlog")
+                            and name.lower().endswith(".xlsx")):
+                        continue
+                    path = os.path.join(root, name)
+                    try:
+                        if os.path.getmtime(path) >= self._run_started_at:
+                            return True
+                    except OSError:
+                        continue
+        except OSError:
+            pass
+        return False
+
     def _poll_external_runner(self):
+        has_result = self._has_fresh_errorlog()
+
+        # 关键修复：3.16 子进程在 QApplication.quit() 后偶发卡死（界面关闭但
+        # qgis-bin.exe 仍在 → Windows 标为"未响应"）。只要目标产物 errorlog.xlsx
+        # 已经写出来，就主动 terminate/kill，不再死等子进程自然退出。
         if self._process is not None and self._process.poll() is None:
-            QTimer.singleShot(2000, self._poll_external_runner)
-            return
+            if has_result:
+                try:
+                    pid = self._process.pid
+                except Exception:
+                    pid = 0
+                self._all_log_lines.append(
+                    "检测到 errorlog.xlsx 已写入，主动结束 3.16 子进程 (PID=%d)，避免卡死未响应" % pid
+                )
+                self._stop_process()
+                # 落到下方 collect 分支，不再 reschedule
+            else:
+                QTimer.singleShot(2000, self._poll_external_runner)
+                return
         self._process = None
         if self._profile_root:
             shutil.rmtree(self._profile_root, ignore_errors=True)
             self._profile_root = None
         self._collect_attempts += 1
-        found = any(
-            name.lower().startswith("errorlog")
-            and name.lower().endswith((".xlsx", ".sqlite"))
-            and os.path.getmtime(os.path.join(root, name)) >= self._run_started_at
-            for root, _dirs, names in os.walk(self._input_dir)
-            for name in names
-        )
-        if not found and self._collect_attempts < 30:
+        if not has_result and self._collect_attempts < 30:
             QTimer.singleShot(2000, self._poll_external_runner)
             return
         self._collect_checker_results()

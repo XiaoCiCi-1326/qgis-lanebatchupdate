@@ -13,6 +13,18 @@ from qgis.core import QgsProject, QgsVectorLayer
 from qgis.utils import iface
 
 
+_HARD_EXIT_FALLBACK_MS = 3000
+
+
+def _schedule_hard_exit():
+    """兜底：QApplication.quit() 后 N 毫秒若仍在跑，强退整个 3.16 进程。
+
+    3.16 在某些机器上 quit 后窗口关闭但 qgis-bin.exe 残留（Windows 标为"未响应"）。
+    父进程侧 _poll_external_runner 也会主动 terminate，但这里再加一道保险。
+    """
+    QTimer.singleShot(_HARD_EXIT_FALLBACK_MS, lambda: os._exit(0))
+
+
 input_dir = os.environ.get("LANEBATCH_SHPCHECKER_INPUT", "")
 vendor_parent = os.environ.get("LANEBATCH_SHPCHECKER_VENDOR", "")
 log_path = os.environ.get("LANEBATCH_SHPCHECKER_LOG", "")
@@ -132,10 +144,12 @@ def poll():
     if state["export_clicked"]:
         if has_export() or state["ticks"] > 240:
             log("finished export=%s" % has_export())
+            _schedule_hard_exit()
             QApplication.quit()
             return
     if state["ticks"] > 300:
         log("timeout")
+        _schedule_hard_exit()
         QApplication.quit()
         return
     QTimer.singleShot(500, poll)
