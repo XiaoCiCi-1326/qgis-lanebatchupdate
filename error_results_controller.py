@@ -413,9 +413,11 @@ class ErrorResultsController:
             else:
                 target_names.extend(fallbacks or [])
             ids = [
-                item.strip().strip("'\"")
+                # 兼容中英文分隔符（"," ";" "|" "与" "和" "、" 等）。split 后
+                # 从每段里再抽数字 ID，处理类似"4046321与4046420"这种中文连接词。
+                digit
                 for item in re.split(r"[,;|]", str(raw_ids or ""))
-                if item.strip().strip("'\"")
+                for digit in re.findall(r"\d+", item)
             ]
             if not target_names or not ids:
                 return
@@ -477,6 +479,16 @@ class ErrorResultsController:
             ("ROAD", r"(?<![A-Za-z0-9_])road[_\s]*link\s*[=:：]\s*(\d+)\b"),
             # "linkid=4034640" / "link_id:4034640" 业务上指 LANE.ID
             ("LANE", r"(?<![A-Za-z0-9_])link[_\s]*id\s*[=:：]?\s*(\d+)\b"),
+            # 【问题#1】lmark_r/lmark_l 顺序错误里的"边线XXX与YYY"明确指向 BOUNDARY，
+            # 例如 "laneID=4046324 lmark_r记录顺序不对（边线4046321与4046420顺序错误）"。
+            #
+            # 注意：分隔符必须用白名单字符类 [、，,\s;；与和()（）]，不能用 \D*? 这种
+            # 通配符 —— 因为 text 里同时拼接了 DETAIL/MESSAGE/ERROR/FEATUREID，宽松的
+            # \D*? 会从"边线4046321与4046420"一路跳到末尾的 FEATUREID=4046324，把无关
+            # 的 ID 也吞进来。多 ID 一次捕获，add_selection 再按数字切分到 ID 列表。
+            ("BOUNDARY", r"边线\D*?(\d{6,}(?:[、，,\s;；与和()（）]+\d{6,})*)"),
+            # "boundary=1234567" / "boundary_id=1234567" / "boundary:1234567" 都走 BOUNDARY
+            ("BOUNDARY", r"(?<![A-Za-z0-9_])boundary(?:[_ ]?id)?\s*[=:：]?\s*(\d+)(?!\d)"),
         )
         for target_name, pattern in reference_patterns:
             ids = re.findall(pattern, text, re.IGNORECASE)
