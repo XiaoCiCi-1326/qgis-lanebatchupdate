@@ -23,7 +23,7 @@ hasProcessingProvider=no
 tags=vector, lane, attribute
 
 category=Vector
-icon=icon.png
+icon=image/icon.png
 # experimental flag
 experimental=False
 

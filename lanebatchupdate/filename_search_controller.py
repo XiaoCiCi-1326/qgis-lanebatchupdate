@@ -24,8 +24,8 @@ class FileNameSearchController:
         self.toolbar_action = None
 
     def initGui(self, actions, register_action=True):
-        search_icon_path = os.path.join(self.plugin_dir, "icon_filename_search.svg")
-        copy_icon_path = os.path.join(self.plugin_dir, "icon_filename_copy.svg")
+        search_icon_path = os.path.join(self.plugin_dir, "image", "icon_filename_search.svg")
+        copy_icon_path = os.path.join(self.plugin_dir, "image", "icon_filename_copy.svg")
         parent = self.iface.mainWindow()
         self.search_action = QAction(QIcon(search_icon_path), "搜索文件", parent)
         self.search_action.triggered.connect(self.search_files)

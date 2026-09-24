@@ -102,7 +102,7 @@ class LayerToolsController:
             ("侧键切换图层", "icon_side_button_toggle.svg", self.open_toggle_settings),
         )
         for label, icon_name, callback in entries:
-            action = QAction(QIcon(os.path.join(self.plugin_dir, icon_name)), label, self.iface.mainWindow())
+            action = QAction(QIcon(os.path.join(self.plugin_dir, "image", icon_name)), label, self.iface.mainWindow())
             action.triggered.connect(callback)
             if register_action:
                 self.iface.addPluginToVectorMenu(MENU_NAME, action)

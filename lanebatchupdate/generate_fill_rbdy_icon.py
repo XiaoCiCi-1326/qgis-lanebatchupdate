@@ -7,7 +7,7 @@ import sys
 from PIL import Image, ImageDraw, ImageFont
 
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
-OUT_PATH = os.path.join(PLUGIN_DIR, "icon_fill_rbdy.png")
+OUT_PATH = os.path.join(PLUGIN_DIR, "image", "icon_fill_rbdy.png")
 SIZE = 32
 
 

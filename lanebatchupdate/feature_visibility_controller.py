@@ -28,7 +28,7 @@ class FeatureVisibilityController:
     def initGui(self, actions_master, register_action=True):
         # 创建主菜单按钮
         self.action = QAction(
-            QIcon(os.path.join(self.plugin_dir, "icon_feature_visibility.svg")),
+            QIcon(os.path.join(self.plugin_dir, "image", "icon_feature_visibility.svg")),
             u"要素显隐控制",
             self.iface.mainWindow()
         )
@@ -38,7 +38,7 @@ class FeatureVisibilityController:
 
         # 隐藏所选
         hide_selected = QAction(
-            QIcon(os.path.join(self.plugin_dir, "icon_hide_selected.svg")),
+            QIcon(os.path.join(self.plugin_dir, "image", "icon_hide_selected.svg")),
             u"隐藏选中要素",
             self.iface.mainWindow()
         )
@@ -47,7 +47,7 @@ class FeatureVisibilityController:
 
         # 显示所选
         show_selected = QAction(
-            QIcon(os.path.join(self.plugin_dir, "icon_show_selected.svg")),
+            QIcon(os.path.join(self.plugin_dir, "image", "icon_show_selected.svg")),
             u"显示选中要素",
             self.iface.mainWindow()
         )
@@ -56,7 +56,7 @@ class FeatureVisibilityController:
 
         # 切换所选
         toggle_selected = QAction(
-            QIcon(os.path.join(self.plugin_dir, "icon_toggle_selected.svg")),
+            QIcon(os.path.join(self.plugin_dir, "image", "icon_toggle_selected.svg")),
             u"切换选中要素",
             self.iface.mainWindow()
         )
@@ -67,7 +67,7 @@ class FeatureVisibilityController:
 
         # 仅显示所选
         show_only_selected = QAction(
-            QIcon(os.path.join(self.plugin_dir, "icon_show_only_selected.svg")),
+            QIcon(os.path.join(self.plugin_dir, "image", "icon_show_only_selected.svg")),
             u"仅显示选中要素",
             self.iface.mainWindow()
         )
@@ -76,7 +76,7 @@ class FeatureVisibilityController:
 
         # 隐藏未选中
         hide_unselected = QAction(
-            QIcon(os.path.join(self.plugin_dir, "icon_hide_unselected.svg")),
+            QIcon(os.path.join(self.plugin_dir, "image", "icon_hide_unselected.svg")),
             u"隐藏未选中要素",
             self.iface.mainWindow()
         )
@@ -87,7 +87,7 @@ class FeatureVisibilityController:
 
         # 显示全部
         show_all = QAction(
-            QIcon(os.path.join(self.plugin_dir, "icon_show_all.svg")),
+            QIcon(os.path.join(self.plugin_dir, "image", "icon_show_all.svg")),
             u"显示当前图层全部要素",
             self.iface.mainWindow()
         )
@@ -96,7 +96,7 @@ class FeatureVisibilityController:
 
         # 显示所有图层的全部要素
         show_all_layers = QAction(
-            QIcon(os.path.join(self.plugin_dir, "icon_show_all_layers.svg")),
+            QIcon(os.path.join(self.plugin_dir, "image", "icon_show_all_layers.svg")),
             u"显示所有图层全部要素",
             self.iface.mainWindow()
         )

@@ -50,7 +50,7 @@ class ExcelPreviewController:
     def initGui(self, actions_master: list, register_action=True):
         if not register_action:
             return
-        icon_path = os.path.join(self.plugin_dir, "icon_lane_fix.png")
+        icon_path = os.path.join(self.plugin_dir, "image", "icon_lane_fix.png")
         action = QAction(QIcon(icon_path), "预览后修复", self.iface.mainWindow())
         action.setToolTip("解析 Excel 后弹出错误清单，可勾选/全选/反选，再一键修复")
         action.triggered.connect(self.run)

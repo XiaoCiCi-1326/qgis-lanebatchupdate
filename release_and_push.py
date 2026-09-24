@@ -47,7 +47,7 @@ status = run("git status --short", check=False)
 print("待提交变更:\n" + (status.stdout or "  (无)"))
 
 # 从 metadata.txt 读版本号
-metadata = (ROOT / "metadata.txt").read_text(encoding="utf-8")
+metadata = (ROOT / "lanebatchupdate" / "metadata.txt").read_text(encoding="utf-8")
 version = "unknown"
 for line in metadata.splitlines():
     if line.startswith("version="):

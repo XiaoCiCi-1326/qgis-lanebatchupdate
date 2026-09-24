@@ -19,7 +19,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-PLUGIN_DIR = Path(__file__).resolve().parent
+PLUGIN_DIR = Path(__file__).resolve().parent / "lanebatchupdate"
+PROJECT_ROOT = Path(__file__).resolve().parent
 REPO_URL = "https://github.com/XiaoCiCi-1326/qgis-lanebatchupdate"
 
 
@@ -45,7 +46,7 @@ def run(cmd: list[str], check=True) -> subprocess.CompletedProcess:
 
 def ensure_changelog(version: str) -> None:
     tag = f"v{version}"
-    cl = PLUGIN_DIR / "CHANGELOG.md"
+    cl = PROJECT_ROOT / "CHANGELOG.md"
     text = cl.read_text(encoding="utf-8") if cl.is_file() else "# 更新日志\n"
     if f"## {tag}" in text or f"## v{version}" in text:
         return

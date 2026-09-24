@@ -82,7 +82,7 @@ class FeatureRelationController(QObject):
         # actions_master.append(tool_button)  # 移除这行
         
         # 关联赋值按钮（保持不变）
-        assign_icon_path = os.path.join(self.plugin_dir, "icon_relation_assign.svg")
+        assign_icon_path = os.path.join(self.plugin_dir, "image", "icon_relation_assign.svg")
         self.assign_action = QAction(QIcon(assign_icon_path), u"关联赋值", self.iface.mainWindow())
         self.assign_action.triggered.connect(self.assign_relation)
         self.iface.addPluginToVectorMenu(u"车道处理工具", self.assign_action)
@@ -92,7 +92,7 @@ class FeatureRelationController(QObject):
     def _create_toolbar_button(self):
         """创建工具栏按钮"""
         # 创建关联高亮&选择的下拉菜单按钮
-        icon_path = os.path.join(self.plugin_dir, "icon_relation_highlight.svg")
+        icon_path = os.path.join(self.plugin_dir, "image", "icon_relation_highlight.svg")
         
         # 创建工具按钮（支持下拉菜单）
         tool_button = QToolButton()
@@ -105,13 +105,13 @@ class FeatureRelationController(QObject):
         menu = QMenu()
         
         # 第一项：自动关联模式（开启/关闭）
-        auto_icon_path = os.path.join(self.plugin_dir, "icon_auto_relation.svg")
+        auto_icon_path = os.path.join(self.plugin_dir, "image", "icon_auto_relation.svg")
         self.auto_mode_action = QAction(QIcon(auto_icon_path), u"自动关联模式 (关闭)", self.iface.mainWindow())
         self.auto_mode_action.triggered.connect(self.toggle_auto_mode)
         menu.addAction(self.auto_mode_action)
         
         # 第二项：打开配置面板
-        config_icon_path = os.path.join(self.plugin_dir, "icon_relation_config.svg")
+        config_icon_path = os.path.join(self.plugin_dir, "image", "icon_relation_config.svg")
         config_action = QAction(QIcon(config_icon_path), u"关联配置", self.iface.mainWindow())
         config_action.triggered.connect(self.open_config_dialog)
         menu.addAction(config_action)
@@ -278,7 +278,7 @@ class FeatureRelationController(QObject):
         
         if self.auto_mode_enabled:
             # 开启自动模式
-            auto_icon_path = os.path.join(self.plugin_dir, "icon_auto_relation.svg")
+            auto_icon_path = os.path.join(self.plugin_dir, "image", "icon_auto_relation.svg")
             self.auto_mode_action.setIcon(QIcon(auto_icon_path))
             self.auto_mode_action.setText(u"自动关联模式 (开启)")
             
@@ -295,7 +295,7 @@ class FeatureRelationController(QObject):
                 self.auto_mode_action.setText(u"自动关联模式 (关闭)")
         else:
             # 关闭自动模式
-            auto_icon_path = os.path.join(self.plugin_dir, "icon_auto_relation.svg")
+            auto_icon_path = os.path.join(self.plugin_dir, "image", "icon_auto_relation.svg")
             self.auto_mode_action.setIcon(QIcon(auto_icon_path))
             self.auto_mode_action.setText(u"自动关联模式 (关闭)")
             

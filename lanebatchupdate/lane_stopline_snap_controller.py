@@ -57,7 +57,7 @@ class LaneStoplineSnapController(QObject):
     def initGui(self, actions_master, register_action=True):
         if not register_action:
             return
-        icon_path = os.path.join(self.plugin_dir, "icon_lane_stopline_snap.svg")
+        icon_path = os.path.join(self.plugin_dir, "image", "icon_lane_stopline_snap.svg")
         self.action = QAction(QIcon(icon_path), "LANE 吸附 STOPLINE", self.iface.mainWindow())
         self.action.setToolTip(
             "将选中 LANE 的最近端点吸附到最近 STOPLINE；端点越过 STOPLINE 时截断越界部分"

@@ -56,7 +56,7 @@ class MapTileSnapController(QObject):
     def initGui(self, actions_master, register_action=True):
         if not register_action:
             return
-        icon_path = os.path.join(self.plugin_dir, "icon_map_tile_snap.svg")
+        icon_path = os.path.join(self.plugin_dir, "image", "icon_map_tile_snap.svg")
         self.action = QAction(QIcon(icon_path), "吸附到范围框", self.iface.mainWindow())
         self.action.setToolTip(
             "将每个选中 LANE/BOUNDARY 的最近端点吸附到 MAP_TILE 边界"

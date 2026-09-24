@@ -31,7 +31,7 @@ class LaneFixController:
     def initGui(self, actions_master, register_action=True):
         if not register_action:
             return
-        icon_path = os.path.join(self.plugin_dir, "icon_lane_fix.png")
+        icon_path = os.path.join(self.plugin_dir, "image", "icon_lane_fix.png")
         action = QAction(QIcon(icon_path), "Excel边线改错", self.iface.mainWindow())
         action.triggered.connect(self.run)
         # 不直接添加到工具栏，由主文件根据 toolbar_mode 控制

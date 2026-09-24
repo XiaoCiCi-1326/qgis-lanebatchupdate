@@ -34,7 +34,7 @@ class BoundaryLengthController:
     def initGui(self, actions_master, register_action=True):
         if not register_action:
             return
-        icon_path = os.path.join(self.plugin_dir, "icon_boundary_length.svg")
+        icon_path = os.path.join(self.plugin_dir, "image", "icon_boundary_length.svg")
         self.action = QAction(QIcon(icon_path), "BOUNDARY长度筛选", self.iface.mainWindow())
         self.action.setToolTip("按 BOUNDARY 线要素长度筛选并高亮")
         self.action.triggered.connect(self.show)

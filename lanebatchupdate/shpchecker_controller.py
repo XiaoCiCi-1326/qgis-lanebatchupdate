@@ -67,7 +67,7 @@ class ShpCheckerController:
             pass
 
     def initGui(self, actions_master, related_action=None, register_action=True):
-        icon_path = os.path.join(self.plugin_dir, "icon_316_wrench.svg")
+        icon_path = os.path.join(self.plugin_dir, "image", "icon_316_wrench.svg")
         self.action = QAction(QIcon(icon_path), "3.16扳手错质检", self.iface.mainWindow())
         self.action.setToolTip("加载转换后的19个数据文件，调用 shpchecker 自动质检并导出 Excel")
         self.action.triggered.connect(self.run)

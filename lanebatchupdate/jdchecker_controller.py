@@ -83,7 +83,7 @@ class JdCheckerController:
             pass
 
     def initGui(self, actions_master, register_action=True):
-        icon = QIcon(os.path.join(self.plugin_dir, "icon_jdchecker.svg"))
+        icon = QIcon(os.path.join(self.plugin_dir, "image", "icon_jdchecker.svg"))
         self.action = QAction(icon, "自动走3.16质检错", self.iface.mainWindow())
         self.action.setToolTip("将19个数据文件交给 QGIS 3.16 jdchecker 自动质检")
         self.action.triggered.connect(self.run)

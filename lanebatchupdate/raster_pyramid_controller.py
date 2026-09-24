@@ -119,7 +119,7 @@ class RasterPyramidController:
     # GUI 注册 / 卸载
     # ------------------------------------------------------------------
     def initGui(self, actions_master, register_action=True):
-        icon_path = os.path.join(self.plugin_dir, "icon_raster_pyramid.svg")
+        icon_path = os.path.join(self.plugin_dir, "image", "icon_raster_pyramid.svg")
         self.action = QAction(QIcon(icon_path), "TIF 生成金字塔", self.iface.mainWindow())
         self.action.setToolTip(
             "为 QGIS 当前已加载的栅格图层生成金字塔，"

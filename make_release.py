@@ -1,17 +1,24 @@
 # -*- coding: utf-8 -*-
-"""打包 lanebatchupdate 发布版（仅运行所需文件）。"""
+"""打包 lanebatchupdate 发布版（仅运行所需文件）。
+
+结构：源码在 PROJECT_ROOT/lanebatchupdate/，图标在 lanebatchupdate/image/。
+输出：release/lanebatchupdate_v<ver>_<stamp>/lanebatchupdate/...
+"""
 import os
 import shutil
 import zipfile
 from datetime import datetime
 from pathlib import Path
 
-PLUGIN_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = PLUGIN_DIR.parent
+# 本脚本位于 PROJECT_ROOT，源码位于 PROJECT_ROOT/lanebatchupdate
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR
+PLUGIN_DIR = PROJECT_ROOT / "lanebatchupdate"
 BACKUP_DIR = PROJECT_ROOT / "备份"
 BACKUP_EXCLUDE = {".git", "__pycache__"}
 
-RELEASE_FILES = (
+# 直接放在插件根的文件
+RELEASE_ROOT_FILES = (
     "__init__.py",
     "lanebatchupdate.py",
     "inertial_follow_controller.py",
@@ -32,7 +39,30 @@ RELEASE_FILES = (
     "feature_visibility_controller.py",
     "feature_relation_controller.py",
     "safety_island_relation_controller.py",
+    "image_viewer_pairing_dialog.py",
+    "image_viewer_dialog.py",
+    "image_viewer_controller.py",
+    "jdcheckerplugin.dll",
+    "lane_fix_excel.py",
+    "lane_fix_engine.py",
+    "lane_fix_controller.py",
+    "excel_preview_dialog.py",
+    "excel_preview_controller.py",
+    "reconstruct_config.py",
+    "reconstruct_controller.py",
+    "reconstruct_feedback.py",
+    "reconstruct_processing.py",
+    "reconstruct_workflow.py",
+    "reconstruct_algorithms.json.example",
+    "raster_pyramid_controller.py",
+    "raster_compress_controller.py",
+    "raster_tile_loader_controller.py",
     "metadata.txt",
+    "安装说明.txt",
+)
+
+# 放在插件 image/ 子目录的图标
+RELEASE_IMAGE_FILES = (
     "icon.png",
     "icon_speed.png",
     "icon_road2.png",
@@ -92,28 +122,15 @@ RELEASE_FILES = (
     "icon_image_prev.svg",
     "icon_image_next.svg",
     "icon_image_dock.svg",
-    "image_viewer_pairing_dialog.py",
-    "image_viewer_dialog.py",
-    "image_viewer_controller.py",
-    "jdcheckerplugin.dll",
-    "lane_fix_excel.py",
-    "lane_fix_engine.py",
-    "lane_fix_controller.py",
-    "excel_preview_dialog.py",
-    "excel_preview_controller.py",
-    "reconstruct_config.py",
-    "reconstruct_controller.py",
-    "reconstruct_feedback.py",
-    "reconstruct_processing.py",
-    "reconstruct_workflow.py",
-    "reconstruct_algorithms.json.example",
-    "raster_pyramid_controller.py",
-    "raster_compress_controller.py",
-    "raster_tile_loader_controller.py",
-    "安装说明.txt",
+    "icon_reconstruct_full.png",
+    "icon_reconstruct_open.png",
+    "icon_reconstruct_pass1.png",
+    "icon_reconstruct_pass2.png",
+    "icon_reconstruct_prep.png",
 )
 
-RELEASE_ROOT_FILES = (
+# 与发布文件夹同级的 install.bat
+RELEASE_LEVEL_FILES = (
     "install.bat",
 )
 
@@ -165,7 +182,7 @@ def read_version():
 
 
 def backup_current_version():
-    """备份当前版本到 备份 目录"""
+    """备份整个项目（源码在 lanebatchupdate/，元数据在项目根）。"""
     version = read_version()
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_name = f"lanebatchupdate_v{version}_{stamp}"
@@ -175,19 +192,47 @@ def backup_current_version():
         BACKUP_DIR.mkdir(parents=True)
 
     shutil.copytree(
-        PLUGIN_DIR,
+        PROJECT_ROOT,
         backup_path,
-        ignore=shutil.ignore_patterns(*BACKUP_EXCLUDE),
-        dirs_exist_ok=False
+        ignore=shutil.ignore_patterns(*BACKUP_EXCLUDE, "备份", "release", "__pycache__"),
+        dirs_exist_ok=False,
     )
     print(f"备份已创建: {backup_path}")
     return backup_path
+
+
+def copy_file(src: Path, dst: Path, missing: list, copied: list, label: str):
+    """复制单个文件；缺失时记录到 missing，成功时记录到 copied。"""
+    if not src.is_file():
+        missing.append(label)
+        return
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+    copied.append(label)
+
+
+def copy_tree(src: Path, dst: Path):
+    """复制整个目录到 dst。"""
+    if not src.exists():
+        print(f"  警告: {src} 不存在，跳过复制")
+        return False
+    if dst.exists():
+        shutil.rmtree(dst)
+    shutil.copytree(
+        src,
+        dst,
+        ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc", ".gitignore"),
+    )
+    return True
 
 
 def main():
     print("=" * 50)
     print("开始发布流程...")
     print("=" * 50)
+
+    if not PLUGIN_DIR.is_dir():
+        raise SystemExit(f"未找到源码目录: {PLUGIN_DIR}")
 
     print("\n[1/4] 备份当前版本...")
     backup_path = backup_current_version()
@@ -199,36 +244,32 @@ def main():
     release_dir = PROJECT_ROOT / "release" / out_name
     zip_path = PROJECT_ROOT / "release" / f"{out_name}.zip"
     plugin_out = release_dir / "lanebatchupdate"
+    image_out = plugin_out / "image"
 
     if release_dir.exists():
         shutil.rmtree(release_dir)
-    plugin_out.mkdir(parents=True)
+    image_out.mkdir(parents=True)
 
-    install_path = PLUGIN_DIR / "_install_readme_tmp.txt"
-    install_path.write_text(INSTALL_README, encoding="utf-8")
+    copied: list[str] = []
+    missing: list[str] = []
 
-    copied = []
-    missing = []
-    for name in RELEASE_FILES:
-        src = PLUGIN_DIR / ("安装说明.txt" if name == "安装说明.txt" else name)
-        if name == "安装说明.txt":
-            src = install_path
-        if not src.is_file():
-            missing.append(name)
-            continue
-        dst = plugin_out / (name if name != "安装说明.txt" else "安装说明.txt")
-        shutil.copy2(src, dst)
-        copied.append(name)
-
-    install_path.unlink(missing_ok=True)
-
+    # 插件根文件
     for name in RELEASE_ROOT_FILES:
         src = PLUGIN_DIR / name
-        if not src.is_file():
-            missing.append(name)
-            continue
-        shutil.copy2(src, release_dir / name)
-        copied.append(name)
+        dst = plugin_out / name
+        copy_file(src, dst, missing, copied, name)
+
+    # image/ 子目录文件
+    for name in RELEASE_IMAGE_FILES:
+        src = PLUGIN_DIR / "image" / name
+        dst = image_out / name
+        copy_file(src, dst, missing, copied, f"image/{name}")
+
+    # 与发布文件夹同级的 install.bat
+    for name in RELEASE_LEVEL_FILES:
+        src = PROJECT_ROOT / name
+        dst = release_dir / name
+        copy_file(src, dst, missing, copied, name)
 
     if missing:
         raise SystemExit(f"缺少文件: {missing}")
@@ -236,25 +277,13 @@ def main():
     print(f"\n[3/4] 复制 js2data 工具目录...")
     js2data_src = PLUGIN_DIR / "js2data"
     js2data_dst = plugin_out / "js2data"
-    
-    if not js2data_src.exists():
-        print("  警告: js2data 目录不存在，跳过复制")
-    else:
-        shutil.copytree(
-            js2data_src,
-            js2data_dst,
-            ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc", ".gitignore")
-        )
+    if copy_tree(js2data_src, js2data_dst):
         print(f"  已复制 js2data 到发布包")
 
+    print("  复制 vendor/shpchecker ...")
     vendor_src = PLUGIN_DIR / "vendor" / "shpchecker"
     vendor_dst = plugin_out / "vendor" / "shpchecker"
-    if vendor_src.exists():
-        shutil.copytree(
-            vendor_src,
-            vendor_dst,
-            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
-        )
+    if copy_tree(vendor_src, vendor_dst):
         print("  已复制 vendor/shpchecker（QGIS 3.16 编译扩展）")
 
     print(f"\n[4/4] 创建 ZIP 包...")
@@ -280,7 +309,6 @@ def main():
         print(f"  - {name}")
     if js2data_src.exists():
         print(f"  - js2data/ (转换工具目录)")
-
 
 
 if __name__ == "__main__":

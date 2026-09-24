@@ -125,7 +125,7 @@ class RasterCompressController:
     def initGui(self, actions_master, register_action=True):
         if not register_action:
             return
-        icon_path = os.path.join(self.plugin_dir, "icon_raster_compress.svg")
+        icon_path = os.path.join(self.plugin_dir, "image", "icon_raster_compress.svg")
         self.action = QAction(QIcon(icon_path), "TIF 压缩", self.iface.mainWindow())
         self.action.setToolTip(
             "将 QGIS 当前已加载的栅格图层压缩为 LZW 格式，"

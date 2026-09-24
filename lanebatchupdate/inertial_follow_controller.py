@@ -25,7 +25,7 @@ class InertialFollowController(QObject):
     def initGui(self, actions_master, register_action=True):
         if not register_action:
             return
-        icon_path = os.path.join(self.plugin_dir, "icon_inertial_follow.svg")
+        icon_path = os.path.join(self.plugin_dir, "image", "icon_inertial_follow.svg")
         self.action = QAction(QIcon(icon_path), "惯导地图跟随", self.iface.mainWindow())
         self.action.setCheckable(True)
         self.action.setToolTip("跟随惯导要素选择移动地图，保持当前比例尺；, / . 切换前后要素")

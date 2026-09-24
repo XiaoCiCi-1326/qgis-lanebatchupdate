@@ -135,7 +135,7 @@ class LaneBatchUpdateTool:
         print(f"[LaneBatchUpdate] 保存工具栏模式: {mode}")
 
     def initGui(self):
-        toggle_icon_path = os.path.join(self.plugin_dir, "icon_toggle_layout.svg")
+        toggle_icon_path = os.path.join(self.plugin_dir, "image", "icon_toggle_layout.svg")
         self.toggle_action = QAction(QIcon(toggle_icon_path), "切换工具栏布局", self.iface.mainWindow())
         self.toggle_action.triggered.connect(self._toggle_toolbar_mode)
         self.iface.addPluginToVectorMenu("车道处理工具", self.toggle_action)
@@ -154,7 +154,7 @@ class LaneBatchUpdateTool:
             (self.MODE_REMOVE_ALL, "移除所有图层", "icon_remove_layers.svg"),
         )
         for mode, label, icon_name in buttons:
-            icon_path = os.path.join(self.plugin_dir, icon_name)
+            icon_path = os.path.join(self.plugin_dir, "image", icon_name)
             action = QAction(QIcon(icon_path), label, self.iface.mainWindow())
             action.triggered.connect(lambda *args, m=mode: self.run(mode=m))
             self.iface.addPluginToVectorMenu("车道处理工具", action)
@@ -306,7 +306,7 @@ class LaneBatchUpdateTool:
         parent = self.iface.mainWindow()
         self.attribute_fill_button = QToolButton(parent)
         self.attribute_fill_button.setDefaultAction(
-            QAction(QIcon(os.path.join(self.plugin_dir, "icon_speed.png")), "属性刷值", parent)
+            QAction(QIcon(os.path.join(self.plugin_dir, "image", "icon_speed.png")), "属性刷值", parent)
         )
         menu = QMenu(self.attribute_fill_button)
         for mode, label, icon_name in (
@@ -319,7 +319,7 @@ class LaneBatchUpdateTool:
             (self.MODE_SAFETY_ISLAND_RELATION, "自动关联安全岛", "icon_safety_island_relation.svg"),
             (self.MODE_GROUP_LANES, "刷成一组", "icon_group_lanes.svg"),
         ):
-            action = QAction(QIcon(os.path.join(self.plugin_dir, icon_name)), label, parent)
+            action = QAction(QIcon(os.path.join(self.plugin_dir, "image", icon_name)), label, parent)
             action.triggered.connect(lambda *args, m=mode: self.run(mode=m))
             menu.addAction(action)
         self.attribute_fill_button.setMenu(menu)
@@ -473,7 +473,7 @@ class LaneBatchUpdateTool:
         for category_name, items in categories.items():
             category_menu = self.main_menu.addMenu(category_name)
             for item_id, label, icon_name in items:
-                icon_path = os.path.join(self.plugin_dir, icon_name)
+                icon_path = os.path.join(self.plugin_dir, "image", icon_name)
                 action = QAction(QIcon(icon_path), label, self.iface.mainWindow())
                 action.triggered.connect(lambda *args, item=item_id: self._handle_menu_action(item))
                 category_menu.addAction(action)

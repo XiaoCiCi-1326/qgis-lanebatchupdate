@@ -1354,8 +1354,8 @@ class AttributePresetController:
         global _ACTIVE_CONTROLLER
         _ACTIVE_CONTROLLER = self
         self._remove_previous_form_hooks()
-        preset_icon_path = f"{self.plugin_dir}/icon_attribute_preset.svg"
-        add_feature_icon_path = f"{self.plugin_dir}/icon_add_feature_preset.svg"
+        preset_icon_path = f"{self.plugin_dir}/image/icon_attribute_preset.svg"
+        add_feature_icon_path = f"{self.plugin_dir}/image/icon_add_feature_preset.svg"
         self.iface.mapCanvas().mapToolSet.connect(self._on_map_tool_set)
         
         # 【关键修复 2024-09-06】监听图层的保存/回滚事件，清理临时 feature 缓存

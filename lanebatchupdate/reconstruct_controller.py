@@ -41,7 +41,7 @@ class ReconstructController:
             (self.MODE_OPEN_ORIG, "打开原始文件", "icon_open_original.svg", "open"),
         )
         for mode, label, icon_name, action_type in buttons:
-            icon_path = os.path.join(self.plugin_dir, icon_name)
+            icon_path = os.path.join(self.plugin_dir, "image", icon_name)
             action = QAction(QIcon(icon_path), label, self.iface.mainWindow())
             if action_type == "open":
                 action.triggered.connect(self.open_original_folder)

@@ -175,7 +175,7 @@ class AlignedSplitController:
     def initGui(self, actions_master, register_action=True):
         if not register_action:
             return
-        icon_path = os.path.join(self.plugin_dir, "icon_aligned_split.svg")
+        icon_path = os.path.join(self.plugin_dir, "image", "icon_aligned_split.svg")
         self.action = QAction(QIcon(icon_path), "平齐打断", self.iface.mainWindow())
         self.action.setCheckable(True)
         self.action.setToolTip("普通分割；按住 Shift 按最近两点方向使用射线平齐打断")
