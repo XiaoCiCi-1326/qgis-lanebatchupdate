@@ -1,5 +1,12 @@
 # 更新日志
 
+
+## v1.1.0.0
+
+- 大版本号递增，里程碑发布
+- make_release.py 输出统一到 E:\Document\Cursor\release\ 与 E:\Document\Cursor\备份\，与历史版本同目录
+- 修复 publish_release.py 读取 metadata.txt 的路径错误（之前指向项目根，应指向 lanebatchupdate/ 子目录）
+
 ## v1.0.4.99
 
 - 修正「候选 lane 多 BDY_LEFT ID」的过滤语义：之前是 **OR**（任意一个 BDY 对应 BOUNDARY.TYPE ∈ KEEP 即合格），改为 **AND**（候选 lane 的所有 BDY_LEFT ID 都必须对应 KEEP 或非 DROP 集合的 BOUNDARY，任一不通过即丢弃整个候选）。

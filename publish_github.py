@@ -80,7 +80,7 @@ def main():
 
     if args.release:
         ensure_changelog(version)
-        run([sys.executable, str(PLUGIN_DIR / "make_release.py")])
+        run([sys.executable, str(PROJECT_ROOT / "make_release.py")])
 
     status = run(["git", "status", "--porcelain"], check=True)
     if status.stdout.strip():

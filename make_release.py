@@ -14,7 +14,10 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR
 PLUGIN_DIR = PROJECT_ROOT / "lanebatchupdate"
-BACKUP_DIR = PROJECT_ROOT / "备份"
+# 发布产物统一放在 E:\Document\Cursor\（与历史版本同目录，便于 publish_release.py / release_and_push.py 查找）
+OUTPUT_ROOT = PROJECT_ROOT.parent
+BACKUP_DIR = OUTPUT_ROOT / "备份"
+RELEASE_DIR = OUTPUT_ROOT / "release"
 BACKUP_EXCLUDE = {".git", "__pycache__"}
 
 # 直接放在插件根的文件
@@ -241,8 +244,8 @@ def main():
     version = read_version()
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_name = f"lanebatchupdate_v{version}_{stamp}"
-    release_dir = PROJECT_ROOT / "release" / out_name
-    zip_path = PROJECT_ROOT / "release" / f"{out_name}.zip"
+    release_dir = RELEASE_DIR / out_name
+    zip_path = RELEASE_DIR / f"{out_name}.zip"
     plugin_out = release_dir / "lanebatchupdate"
     image_out = plugin_out / "image"
 

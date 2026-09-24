@@ -25,7 +25,7 @@ def run(cmd, check=True):
 
 
 # 1. 读版本号
-metadata = (ROOT / "metadata.txt").read_text(encoding="utf-8")
+metadata = (PLUGIN_DIR / "metadata.txt").read_text(encoding="utf-8")
 version = "unknown"
 for line in metadata.splitlines():
     if line.startswith("version="):
