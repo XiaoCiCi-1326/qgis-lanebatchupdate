@@ -92,12 +92,23 @@ run(f"git tag -d {tag}", check=False)
 run(f"git push origin :refs/tags/{tag}", check=False)
 
 # 创建 release
-cmd = (
-    f'gh release create {tag} "{zip_path}" '
-    f'--title "{title}" '
-    f'--notes "{notes}"'
-)
-run(cmd)
+# notes 里含换行 / 中文，直接拼到 shell 字符串里会被 cmd.exe 截断；
+# 改写成临时文件 + --notes-file，避免 shell 转义问题。
+import tempfile
+notes_file = PROJECT_ROOT / f".release_notes_{tag}.md"
+notes_file.write_text(notes + "\n", encoding="utf-8")
+try:
+    cmd = (
+        f'gh release create {tag} "{zip_path}" '
+        f'--title "{title}" '
+        f'--notes-file "{notes_file}"'
+    )
+    run(cmd)
+finally:
+    try:
+        notes_file.unlink()
+    except OSError:
+        pass
 
 print("\n" + "=" * 60)
 print(f"完成！Release 已发布：")
