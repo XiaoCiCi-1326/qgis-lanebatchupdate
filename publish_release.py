@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
 """发布 GitHub Release：自动从 metadata.txt 读版本号 + release/ 下的 zip"""
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = ROOT
 PLUGIN_DIR = ROOT / "lanebatchupdate"
 os.chdir(ROOT)
 
@@ -63,17 +65,22 @@ print("gh 已认证")
 # 5. 发布 release（删除旧的同名 tag 再发，避免 "already exists"）
 tag = f"v{version}"
 title = f"Lane 批量刷值工具 v{version}"
-notes = (
-    f"## v{version}\n\n"
-    f"### 修复\n"
-    f"- 修复嵌套 commit 导致 `图层不可编辑` 的问题\n"
-    f"- 修 `was_editing=True` 时替用户 commit/rollback 的风险\n"
-    f"- 详细日志：5 级策略失败时显示具体哪一级失败\n\n"
-    f"### 新增\n"
-    f"- **策略 6：同 link 上其他车道 RBDY 复用** —— 解决 5 级策略全失败时束手无策\n"
-    f"  - 一条 link 多车道共享同一组边线 ID\n"
-    f"  - 同 link 上任一车道有 RBDY 值，其他车道可复用\n"
-)
+# 读取 CHANGELOG.md 顶部第一个 `## v<version>` 段作为 Release notes
+changelog_path = PROJECT_ROOT / "CHANGELOG.md"
+notes = f"## v{version}\n\n（请编辑 publish_release.py 自动读取 CHANGELOG.md 或在此补充本次更新说明）"
+try:
+    cl_text = changelog_path.read_text(encoding="utf-8")
+    m = re.search(
+        rf"##\s*v?{re.escape(version)}\s*\n(.*?)(?=\n##\s*v?\d|\Z)",
+        cl_text,
+        re.DOTALL,
+    )
+    if m:
+        body = m.group(1).strip()
+        if body:
+            notes = f"## v{version}\n\n{body}"
+except Exception as e:
+    print(f"读取 CHANGELOG.md 失败: {e}")
 
 print(f"\n准备发布: {tag}")
 print(f"标题: {title}")

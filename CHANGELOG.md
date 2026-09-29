@@ -1,6 +1,17 @@
 # 更新日志
 
 
+## v1.1.0.1
+
+- 修复「全部规则」中【LANE_MARKING】marktype=11 这类错误点击定位错位的 bug：
+  - 之前质检库里 `LANE_MARKING` 行被映射到 `BOUNDARY` 图层，但定位逻辑只读了 `FEATUREID` 字段（很多情况下为空或指向 LANE 行），导致点击错误记录后画布选中的不是用户期望的边线。
+  - 现在 `LANE_MARKING` 行额外登记 `LANEMARKID` 字段；新增两条 reference pattern：`LANEMARKID=xxx` / `lanemarkid=xxx` 和 shpchecker 序列化形式 `[LANE_MARKING][LANEMARKID][XXX]` / `[LANEMARKID】XXX`，统一路由到 BOUNDARY。
+  - 兜底 6+ 位数字候选图层加入 BOUNDARY（原来只有 LANE/ROAD/SIGNAL/INTERSECTION），避免 marking ID 被误判为 LANE。
+  - 修复 `LANE` 上下文正则被 `[LANE_MARKING][LANEMARKID][XXX]` 误抓的回归：增加 `(?<!\[LANE MARKING\])(?<!\[LANEMARKID\])` 否定回看，跳过 marking 上下文。
+  - `select_record` 在 `LAYER=LANE_MARKING` 时优先把 `BOUNDARY` 置为活动图层，画布定位 / 后续操作聚焦到边线而不是 LANE。
+- 新增单测 `test_lane_marking_selection.py`，4 个用例覆盖 LANEMARKID 独立列、内联 `LANEMARKID=`、shpchecker 序列化形式、回归普通 LANE 错误路由。
+- 同步清理：CHANGELOG 重复的 v1.0.4.99 段合并、`.gitignore` 乱码 `澶囦唤/` 行删除、删除冗余脚本 `release_and_push.py`（已被 `publish_release.py` + `publish_github.py --release` 取代）、`publish_release.py` 自动从 `CHANGELOG.md` 顶部读取对应版本段作为 Release notes。
+
 ## v1.1.0.0
 
 - 大版本号递增，里程碑发布
@@ -42,12 +53,6 @@
 ## v1.0.4.101
 
 - 【3.16 扳手错】导出 Excel 后主动结束子进程：之前偶发出现 `qgis-bin.exe` 窗口关闭但进程残留、Windows 标为"未响应"。现已在 `errorlog.xlsx` 一旦写入磁盘就由父进程 `_poll_external_runner` 调用 `_stop_process` 主动 `terminate`/`kill`；同时 `shpchecker_runner.py` 在 `QApplication.quit()` 后用 `QTimer.singleShot(3000, os._exit(0))` 兜底自退，双保险。
-
-## v1.0.4.99
-
-- 新增「【问题#6】LANE 边线数量不足」自动修复：解析 `laneID=xxx 右边线数量不足(应>N，实际:M)` 这类错误后，清空目标 lane 的 `RBDY_L/R`，从 `FROM_NODE` 与 `TO_NODE` 两个方向各自分别查找 `LANE_NODE.LANES` 关联的邻居 LANE，经「排除当前车道 + 排除 `TURN_TYPE=4` + 按 `BDY_LEFT` 找 BOUNDARY 后过滤 `TYPE ∈ {1,2,5,6}`」三级过滤得到合格邻居，聚合邻居 `RBDY_L/R` 的边线 ID 后按 FROM→TO 顺序回写到目标车道。
-- `LaneFixEngine` 新增 `lane_node_layer` / `boundary_layer` 可选参数与对应索引，`lane_fix_controller.py` 与 `excel_preview_controller.py` 自动识别工程内 LANE_NODE 与 BOUNDARY 图层并传入；缺失时日志告警并跳过该规则，其余规则不受影响。
-- 预览对话框增加 `fill_from_neighbor_rbdy` 动作颜色标识。
 
 ## v1.0.4.98
 

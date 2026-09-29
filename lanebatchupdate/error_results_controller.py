@@ -453,13 +453,19 @@ class ErrorResultsController:
                 break
 
         add_selection(primary_layer, data.get("FEATUREID"))
+        # 【LANE_MARKING】专用：marking 本身就是 BOUNDARY 图层里的边线（LANE_MARKING
+        # 几何 + LANEMARKID 等价于 BOUNDARY.ID）。质检库常把 LANEMARKID 单独存一列，
+        # 如果只读 FEATUREID 会把 LANE 行选上而漏掉真正要看的边线。
+        # 这里无论 FEATUREID 命中与否都额外登记一次 LANEMARKID，便于诊断。
+        if source_layer == "LANE_MARKING":
+            add_selection("LANE_MARKING", data.get("LANEMARKID"))
         add_selection(data.get("REF_LAYER_1"), data.get("RL_1_FIELD_1_IS"))
         add_selection(data.get("REF_LAYER_2"), data.get("RL_1_FIELD_2_IS"))
         detail = str(data.get("DETAIL") or "").strip()
         # Excel/errorlog rows often contain several cross-layer references only
         # in the free-text description, e.g. intersection=..., signal=...,
         # lane: .... Parse each reference so one click selects every element.
-        text = " ".join(str(data.get(key) or "") for key in ("DETAIL", "MESSAGE", "ERROR", "FEATUREID"))
+        text = " ".join(str(data.get(key) or "") for key in ("DETAIL", "MESSAGE", "ERROR", "FEATUREID", "LANEMARKID"))
         # 注意：必须用 ASCII 词边界 (?<![A-Za-z0-9_]) / (?![A-Za-z0-9_])
         # 替代 \b。Python 3 的 \b 是 Unicode-aware 的，中文字符也算 \w，
         # 会导致 `\blane` 在 "路口lane挂接缺失" 这种中文上下文里匹配失败。
@@ -472,8 +478,11 @@ class ErrorResultsController:
             ("SIGNAL", r"(?<![A-Za-z0-9_])signal\s*[=:：]\s*(\d+)\b"),
             ("LANE", r"(?<![A-Za-z0-9_])lane[_\s]*id\s*[=:：]?\s*(\d+)\b"),
             ("LANE", r"(?<![A-Za-z0-9_])lane\s*[=:：]\s*(\d+)\b"),
-            # 中文上下文里 lane 后面常不写 = 或 :，例如 "路口lane挂接缺失:4034636"
-            ("LANE", r"(?<![A-Za-z0-9_])lane[^\d,，;；。]{0,16}(\d{6,})"),
+            # 中文上下文里 lane 后面常不写 = 或 :，例如 "路口lane挂接缺失:4034636"。
+            # 注意：必须排除 LANE_MARKING / LANEMARKID 这种 marking 上下文，
+            # 否则 "[LANE_MARKING][LANEMARKID][8151373" 里的 lane 也会被误抓成 LANE ID，
+            # 导致 marking 错误反而命中到 LANE 图层（这就是本次 bug 的根因之一）。
+            ("LANE", r"(?<![A-Za-z0-9_])(?<!\[LANE[_ ]MARKING\])(?<!\[LANEMARKID\])lane[^\d,，;；。\[\]【】]{0,16}(\d{6,})"),
             # "挂接缺失:4034636" / "挂接多余[lane:4030675]"
             ("LANE", r"挂接[缺失错误多余]*[^\d,，;；。]{0,12}(\d{6,})"),
             ("ROAD", r"(?<![A-Za-z0-9_])road[_\s]*link\s*[=:：]\s*(\d+)\b"),
@@ -489,14 +498,22 @@ class ErrorResultsController:
             ("BOUNDARY", r"边线\D*?(\d{6,}(?:[、，,\s;；与和()（）]+\d{6,})*)"),
             # "boundary=1234567" / "boundary_id=1234567" / "boundary:1234567" 都走 BOUNDARY
             ("BOUNDARY", r"(?<![A-Za-z0-9_])boundary(?:[_ ]?id)?\s*[=:：]?\s*(\d+)(?!\d)"),
+            # 【LANE_MARKING】marking 本身就是边线：解析形如
+            # "LANEMARKID=8151373" / "lanemark_id:8151373" / "LANEMARKID[8151373]"
+            # 的描述，把 ID 路由到 BOUNDARY 图层。
+            ("BOUNDARY", r"(?<![A-Za-z0-9_])lane[_ ]?mark[_ ]?id\s*[=:：\[]\s*(\d{6,})"),
+            # shpchecker 把 ERROR_LOG 行序列化成 [LEVEL][LAYER][FIELD][ID]... 的形式，
+            # 例如 "[error][LANE_MARKING][LANEMARKID][8151373】..." —— 中括号 / 全角
+            # 半角混合，需要兼容。等号形式也一并捕获。
+            ("BOUNDARY", r"\[(?:LANE[_ ]?MARKING|LANEMARKID)\]\s*[【\[\(]?\s*(\d{6,})"),
         )
         for target_name, pattern in reference_patterns:
             ids = re.findall(pattern, text, re.IGNORECASE)
             if ids:
                 add_selection(target_name, "|".join(ids))
-        # 兜底：剩余未被识别的 6+ 位纯数字，按 LANE → ROAD → SIGNAL → INTERSECTION
-        # 顺序查找（比如 "linkid=4034640 路口lane挂接缺失:4034636" 既要把 4034636
-        # 当 lane 选，也要把 4034640 在 LANE 里试着定位一下）。
+        # 兜底：剩余未被识别的 6+ 位纯数字，按 LANE → ROAD → BOUNDARY → SIGNAL →
+        # INTERSECTION 顺序查找（比如 "linkid=4034640 路口lane挂接缺失:4034636"
+        # 既要把 4034636 当 lane 选，也要把 4034640 在 LANE 里试着定位一下）。
         covered = {value for values in display_ids.values() for value in values}
         # 这里必须用 ASCII 数字边界 (?<![0-9]) / (?![0-9])：Python 3 的 \b
         # 把中文字符也当成 \w，会让 "车道4030501" 里的 4030501 也漏掉。
@@ -504,7 +521,7 @@ class ErrorResultsController:
             value = match.group(1)
             if value in covered:
                 continue
-            add_selection(None, value, fallbacks=("LANE", "ROAD", "SIGNAL", "INTERSECTION"))
+            add_selection(None, value, fallbacks=("LANE", "ROAD", "BOUNDARY", "SIGNAL", "INTERSECTION"))
         rule = str(data.get("RULENO") or "").strip()
         level = str(data.get("ERRORLEVEL") or "").strip()
         return {
@@ -560,7 +577,19 @@ class ErrorResultsController:
         for layer, feature_ids in layers_to_select.values():
             layer.selectByIds(feature_ids)
         if layers_to_select:
-            self.iface.setActiveLayer(next(iter(layers_to_select.values()))[0])
+            # 【LANE_MARKING】专用：marking 本身就是 BOUNDARY 行，把 BOUNDARY 置为
+            # 活动图层，让画布定位和后续操作聚焦在边线上，而不是 LANE。
+            quality_source = record.get("quality_source") or {}
+            source_layer = str(quality_source.get("LAYER") or "").strip().upper()
+            active_layer = None
+            if source_layer == "LANE_MARKING":
+                for layer, _ in layers_to_select.values():
+                    if layer.name().upper() == "BOUNDARY":
+                        active_layer = layer
+                        break
+            if active_layer is None:
+                active_layer = next(iter(layers_to_select.values()))[0]
+            self.iface.setActiveLayer(active_layer)
         canvas = self.iface.mapCanvas()
         location = record.get("location")
         if location is not None:

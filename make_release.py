@@ -14,7 +14,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR
 PLUGIN_DIR = PROJECT_ROOT / "lanebatchupdate"
-# 发布产物统一放在 E:\Document\Cursor\（与历史版本同目录，便于 publish_release.py / release_and_push.py 查找）
+# 发布产物统一放在 PROJECT_ROOT.parent/（与历史版本同目录，便于 publish_release.py / publish_github.py 查找）
 OUTPUT_ROOT = PROJECT_ROOT.parent
 BACKUP_DIR = OUTPUT_ROOT / "备份"
 RELEASE_DIR = OUTPUT_ROOT / "release"
